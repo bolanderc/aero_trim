@@ -512,35 +512,55 @@ class TrimCase:
         c_elev = np.cos(np.deg2rad(elevation_angle))
         s_bank = np.sin(np.deg2rad(bank_angle))
         c_bank = np.cos(np.deg2rad(bank_angle))
-        orientation_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
+        euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
         if shss_flag:
-            [p, q, r] = [0., 0., 0.]
+            rot_rates = [0., 0., 0.]
         else:
-            [p, q, r] = self._sct_rot_rates([s_elev, c_elev,
-                                            s_bank, c_bank],
-                                           orientation_transform,
-                                           u, w)
-        params = list(params[:] + [p, q, r])
-        aero_forces, aero_moments = self._dimensionalize_fm(params, f_xt)
-        weight_forces = [x*self.W for x in orientation_transform]
-        mass = self.W/self.g
-        rot_forces = [x*mass for x in [r*v - q*w, p*w - r*u, q*u - p*v]]
+            rot_rates = self._sct_rot_rates([s_elev, c_elev,
+                                             s_bank, c_bank],
+                                            euler_transform,
+                                            u, w)
+        params = list(params[:] + rot_rates)
+        aero_forces, aero_moments = self._dimensionalize_aero_fm(params, f_xt)
+        weight_forces = self._6dof_weight_forces(euler_transform)
+        rot_forces = self._6dof_coriolis_forces(rot_rates, vel_bf)
         total_forces = [x + y + z for x, y, z in zip(aero_forces,
                                                      weight_forces,
                                                      rot_forces)]
-        rotor_moments = list(np.matmul(self.ang_mom_mat, np.array([p, q, r])))
-        corr_moments = [(self.Iyy - self.Izz)*q*r + self.Iyz*(q**2 - r**2) + \
-                            self.Ixz*p*q - self.Ixy*p*r,
-                        (self.Izz - self.Ixx)*p*r + self.Ixz*(r**2 - p**2) + \
-                            self.Ixy*q*r - self.Iyz*p*q,
-                        (self.Ixx - self.Iyy)*p*q + self.Ixy*(p**2 - q**2) + \
-                            self.Iyz*p*r - self.Ixz*q*r]
+        rotor_moments = self._6dof_rotor_moments(rot_rates)
+        corr_moments = self._6dof_coriolis_moments(rot_rates)
         total_moments = [x + y + z for x, y, z in zip(aero_moments,
                                                       rotor_moments,
                                                       corr_moments)]
         return total_forces, total_moments
 
-    def _dimensionalize_fm(self, params, f_xt):
+    def _6dof_weight_forces(self, euler_transform):
+        weight_forces = [x*self.W for x in euler_transform]
+        return weight_forces
+
+    def _6dof_coriolis_forces(self, rot_rates, vel_bf):
+        p, q, r = rot_rates
+        u, v, w = vel_bf
+        mass = self.W/self.g
+        coriolis_forces = [mass*x for x in [r*v - q*w, p*w - r*u, q*u - p*v]]
+        return coriolis_forces
+
+    def _6dof_rotor_moments(self, rot_rates):
+        rotor_moments = list(np.matmul(self.ang_mom_mat, np.array(rot_rates)))
+        return rotor_moments
+
+    def _6dof_coriolis_moments(self, rot_rates):
+        p, q, r = rot_rates
+        cor_moment_1 = ((self.Iyy - self.Izz)*q*r + self.Iyz*(q**2 - r**2) +
+                        self.Ixz*p*q - self.Ixy*p*r)
+        cor_moment_2 = ((self.Izz - self.Ixx)*p*r + self.Ixz*(r**2 - p**2) +
+                        self.Ixy*q*r - self.Iyz*p*q)
+        cor_moment_3 = ((self.Ixx - self.Iyy)*p*q + self.Ixy*(p**2 - q**2) +
+                        self.Iyz*p*r - self.Ixz*q*r)
+        return [cor_moment_1, cor_moment_2, cor_moment_3]
+
+
+    def _dimensionalize_aero_fm(self, params, f_xt):
         f_x = self.c_x(params)[0]*self.nondim_coeff + f_xt
         f_y = self.c_y(params)[0]*self.nondim_coeff
         f_z = self.c_z(params)[0]*self.nondim_coeff
@@ -559,11 +579,11 @@ class TrimCase:
         [u, v, w] = [x*const_coeff for x in wind_to_body]
         return [u, v, w]
 
-    def _sct_rot_rates(self, sc_angles, orientation_transform, u, w):
+    def _sct_rot_rates(self, sc_angles, euler_transform, u, w):
         s_elev, c_elev = sc_angles[:2]
         s_bank, c_bank = sc_angles[2:]
         constant_coeff = self.g*s_bank*c_elev/(u*c_elev*c_bank + w*s_elev)
-        p, q, r = [x*constant_coeff for x in orientation_transform]
+        p, q, r = [x*constant_coeff for x in euler_transform]
         return [p, q, r]
 
 

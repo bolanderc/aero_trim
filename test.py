@@ -114,7 +114,7 @@ def test_sct_rot_rates():
                             0.10875314197455521]
     assert np.allclose(rot_rates, rot_rates_analytical, atol=1e-13)
 
-def test_dimensionalize_fm():
+def test_dimensionalize_aero_fm():
     """Tests that the aerodynamic coefficients are dimensionalized properly."""
     v_free, rho_free = 100., 0.0023084
     trim_case = aero_trim.TrimCase(v_free, rho_free)
@@ -130,7 +130,7 @@ def test_dimensionalize_fm():
     r = 0.
     f_xt = 100.
     params = [alpha, beta, d_e, d_a, d_r, p, q, r]
-    forces, moments = trim_case._dimensionalize_fm(params, f_xt)
+    forces, moments = trim_case._dimensionalize_aero_fm(params, f_xt)
     forces_test = [707.15108331, -8.5465337, -1656.14365612]
     moments_test = [-33.67271836, 54120.6095819, 110.17488516]
     force_diff = [abs(x - y) for x, y in zip(forces, forces_test)]
@@ -139,36 +139,134 @@ def test_dimensionalize_fm():
     moment_assert = np.allclose(moment_diff, [0., 0., 0], atol=1e-8)
     assert force_assert*moment_assert
 
-# def test_6dof_fm():
-#     """Tests that the 6DOF equation outputs the correct forces and moments. """
-#     v_free, rho_free = 100., 0.0023084
-#     trim_case = aero_trim.TrimCase(v_free, rho_free)
-#     trim_case.import_aero_data(TEST_DATA_FILE_NAME, NUM_DIMENSIONS,
-#                                NUM_PTS_PER_DIMENSION, DIMENSION_LIMS)
-#     alpha = 10.
-#     beta = 0.
-#     d_e = 0.
-#     d_a = 0.
-#     d_r = 10.
-#     f_xt = 100.
-#     params = [alpha, beta, d_e, d_a, d_r]
-#     theta = 10.
-#     phi = 20.
-#     orientation = [theta, phi]
-#     vel_bf = trim_case._vel_comp(alpha, beta)
-#     forces, moments = trim_case._6dof_fm(params, f_xt, orientation, vel_bf)
-#     p, q, r = [-0.002455152426217877,
-#                0.0024458098300053346,
-#                0.027955734279568805]
-#     params = list(params[:] + [p, q, r])
-#     f_aero_test, m_aero_test = trim_case._dimensionalize_fm(params, f_xt)
-#     f_orient_test = [-1786.6927263269924, 1779.893821086036,
-#                      20344.279468375134]
-#     f_corr_test = [27.039017416012314, 1779.893821086036, -153.34588789175726]
-#     f_total_test = [x + y + z for x, y, z in zip(f_aero_test,
-#                                                  f_orient_test,
-#                                                  f_corr_test)]
-#     assert np.allclose(forces, f_total_test, atol=1e-12)
+def test_weight_forces():
+    """Tests that the 6DOF equation outputs the correct forces due to
+    orientation.
+    """
+    v_free, rho_free = 100., 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    elevation_angle = 5.
+    bank_angle = 5.
+    s_elev = np.sin(np.deg2rad(elevation_angle))
+    c_elev = np.cos(np.deg2rad(elevation_angle))
+    s_bank = np.sin(np.deg2rad(bank_angle))
+    c_bank = np.cos(np.deg2rad(bank_angle))
+    euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
+    f_weight = trim_case._6dof_weight_forces(euler_transform)
+    f_weight_test = [-1786.6927263269924, 1779.893821086036,
+                     20344.279468375134]
+    assert np.allclose(f_weight, f_weight_test, atol=1e-12)
+
+def test_coriolis_forces():
+    """Tests that the 6DOF equation outputs the correct forces Coriolis
+    effects.
+    """
+    v_free, rho_free = 100., 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    elevation_angle = 5.
+    bank_angle = 5.
+    alpha = 10.
+    beta = 0.
+    s_elev = np.sin(np.deg2rad(elevation_angle))
+    c_elev = np.cos(np.deg2rad(elevation_angle))
+    s_bank = np.sin(np.deg2rad(bank_angle))
+    c_bank = np.cos(np.deg2rad(bank_angle))
+    euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
+    sc_angles = [s_elev, c_elev, s_bank, c_bank]
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    u, v, w = vel_bf
+    rot_rates = trim_case._sct_rot_rates(sc_angles, euler_transform, u, w)
+    coriolis_forces = trim_case._6dof_coriolis_forces(rot_rates, vel_bf)
+    coriolis_forces_test = [-27.0390174160123, -1779.89382108604,
+                            153.345887891757]
+    assert np.allclose(coriolis_forces, coriolis_forces_test, atol=1e-12)
+
+def test_rotor_moments():
+    """Tests that the 6DOF equation outputs the correct moments due to
+    spinning rotors.
+    """
+    v_free, rho_free = 100., 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    elevation_angle = 5.
+    bank_angle = 5.
+    alpha = 10.
+    beta = 0.
+    s_elev = np.sin(np.deg2rad(elevation_angle))
+    c_elev = np.cos(np.deg2rad(elevation_angle))
+    s_bank = np.sin(np.deg2rad(bank_angle))
+    c_bank = np.cos(np.deg2rad(bank_angle))
+    euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
+    sc_angles = [s_elev, c_elev, s_bank, c_bank]
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    u, v, w = vel_bf
+    rot_rates = trim_case._sct_rot_rates(sc_angles, euler_transform, u, w)
+    rotor_moments = trim_case._6dof_rotor_moments(rot_rates)
+    rotor_moments_test = [0.0, -4.47291748473101, 0.391329572800854]
+    assert np.allclose(rotor_moments, rotor_moments_test, atol=1e-12)
+
+def test_coriolis_moments():
+    """Tests that the 6DOF equation outputs the correct moments due to
+    Coriolis effects.
+    """
+    v_free, rho_free = 100., 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    elevation_angle = 5.
+    bank_angle = 5.
+    alpha = 10.
+    beta = 0.
+    s_elev = np.sin(np.deg2rad(elevation_angle))
+    c_elev = np.cos(np.deg2rad(elevation_angle))
+    s_bank = np.sin(np.deg2rad(bank_angle))
+    c_bank = np.cos(np.deg2rad(bank_angle))
+    euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
+    sc_angles = [s_elev, c_elev, s_bank, c_bank]
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    u, v, w = vel_bf
+    rot_rates = trim_case._sct_rot_rates(sc_angles, euler_transform, u, w)
+    coriolis_moments = trim_case._6dof_coriolis_moments(rot_rates)
+    coriolis_moments_test = [-0.504072698009135, -2.91760571417836,
+                             0.210988320654507]
+    assert np.allclose(coriolis_moments, coriolis_moments_test, atol=1e-12)
+
+def test_6dof_fm():
+    """Tests that the 6DOF equation outputs the correct forces and moments. """
+    v_free, rho_free = 100., 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case.import_aero_data(TEST_DATA_FILE_NAME, NUM_DIMENSIONS,
+                                NUM_PTS_PER_DIMENSION, DIMENSION_LIMS)
+    alpha = 10.
+    beta = 0.
+    d_e = 0.
+    d_a = 0.
+    d_r = 10.
+    f_xt = 100.
+    params = [alpha, beta, d_e, d_a, d_r]
+    theta = 5.
+    phi = 5.
+    orientation = [theta, phi]
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    forces, moments = trim_case._6dof_fm(params, f_xt, orientation, vel_bf)
+    p, q, r = [-0.002455152426217877,
+                0.0024458098300053346,
+                0.027955734279568805]
+    params = list(params[:] + [p, q, r])
+    f_aero_test, m_aero_test = trim_case._dimensionalize_aero_fm(params, f_xt)
+    f_weight_test = [-1786.6927263269924, 1779.893821086036,
+                     20344.279468375134]
+    f_coriolis_test = [-27.0390174160123, -1779.89382108604,
+                            153.345887891757]
+    f_total_test = [x + y + z for x, y, z in zip(f_aero_test,
+                                                 f_weight_test,
+                                                 f_coriolis_test)]
+    force_assert = np.allclose(forces, f_total_test, atol=1e-12)
+    m_rotor_test = [0.0, -4.47291748473101, 0.391329572800854]
+    m_coriolis_test = [-0.504072698009135, -2.91760571417836,
+                       0.210988320654507]
+    m_total_test = [x + y + z for x, y, z in zip(m_aero_test,
+                                                 m_rotor_test,
+                                                 m_coriolis_test)]
+    moment_assert = np.allclose(moments, m_total_test, atol=1e-12)
+    assert force_assert*moment_assert
 
 
 
