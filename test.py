@@ -30,6 +30,14 @@ def test_dimension_inputs():
         trim_case.import_aero_data(TEST_DATA_FILE_NAME, NUM_DIMENSIONS,
                                    num_pts_per_dimension, DIMENSION_LIMS)
 
+def test_database_arguments():
+    """Tests that an exception is thrown if the proper arguments are not
+    specified when using a database for trimming.
+    """
+    v_free, rho_free = 222.5211, 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    with pytest.raises(Exception):
+        trim_case.import_aero_data(TEST_DATA_FILE_NAME)
 
 def test_data_in():
     """Tests that .csv data is properly ordered by the `_import_csv` method."""
@@ -41,7 +49,6 @@ def test_data_in():
                                                 NUM_PTS_PER_DIMENSION,
                                                 SORT_HEADER_TITLES)
     data_in_array = data_in[coeff_header_titles].to_numpy()
-
     assert np.allclose(data_in_array[0, 0], 0.189408635274333, atol=10e-12)
 
 def test_data_array():
@@ -52,7 +59,6 @@ def test_data_array():
                                                 NUM_DIMENSIONS,
                                                 NUM_PTS_PER_DIMENSION,
                                                 SORT_HEADER_TITLES)
-
     assert np.allclose(data_array[0, 0, 0, 0, 0, 0, 0, 0, 0],
                        0.189408635274333, atol=10e-12)
 
@@ -78,7 +84,6 @@ def test_save_aero_data():
                              atol=10e-12)
     moment_test = np.allclose(trim_case.c_ell(test_case), 0.050172906838691,
                               atol=10e-12)
-
     assert force_test*moment_test
 
 def test_vel_comp():
@@ -267,6 +272,10 @@ def test_6dof_fm():
                                                  m_coriolis_test)]
     moment_assert = np.allclose(moments, m_total_test, atol=1e-12)
     assert force_assert*moment_assert
+
+def test_calc_elevation():
+    """Tests that the elevation angle is properly calculated."""
+
 
 
 

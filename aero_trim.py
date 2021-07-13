@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import warnings
+import sys
 
 from scipy.interpolate import RegularGridInterpolator as rgi
 import scipy.optimize as optimize
@@ -233,9 +234,7 @@ class TrimCase:
         self.trim_solution = np.zeros(6)
 
 
-    def import_aero_data(
-            self, file_name, num_dimensions, num_pts_per_dimension,
-            dimension_lims, **kwargs):
+    def import_aero_data(self, file_name, *args, **kwargs):
         """Imports aerodynamic data and saves it for use in the trim algorithm.
 
         Body-fixed aerodynamic force and moment coefficient data in the form
@@ -331,36 +330,75 @@ class TrimCase:
                                        num_pts_per_dimension, dimension_lims)
 
         """
-        save_numpy = kwargs.get("save_numpy", False)
-        save_sorted = kwargs.get("save_sorted", False)
-        header_titles = kwargs.get("header_titles",
-                                   ['AOA', 'Beta', 'd_e', 'd_a',
-                                    'd_r', 'p', 'q', 'r'])
-        database_params = kwargs.get("database_params", False)
-        if not database_params:
+        model = kwargs.get("model", "database")
+        if model == "database":
+            save_numpy = kwargs.get("save_numpy", False)
+            save_sorted = kwargs.get("save_sorted", False)
+            header_titles = kwargs.get("header_titles",
+                                       ['AOA', 'Beta', 'd_e', 'd_a',
+                                        'd_r', 'p', 'q', 'r'])
             try:
-                int(num_pts_per_dimension)
-            except TypeError:
-                print("Please specify `database_params` if " +
-                      "`num_pts_per_dimension` is not an integer.")
-            database_params = np.zeros((num_dimensions, num_pts_per_dimension))
-            for i in range(num_dimensions):
-                database_params[i, :] = np.linspace(dimension_lims[i][0],
-                                                    dimension_lims[i][1],
-                                                    num_pts_per_dimension)
-            database_params = tuple(database_params)
-        if file_name[-4:] == '.csv':
-            data_in, data_nd_array = self._import_csv(file_name,
-                                                      num_dimensions,
-                                                      num_pts_per_dimension,
-                                                      header_titles)
-            if save_sorted:
-                data_in.to_csv("./" + file_name[:-4] + "_sorted.csv")
-            if save_numpy:
-                np.save("./" + file_name[:-4] + ".npy", data_nd_array)
-        if file_name[-4:] == '.npy':
-            data_nd_array = np.load(file_name)
-        self._save_aero_data(data_nd_array, database_params)
+                num_dimensions, num_pts_per_dimension, dimension_lims = (*args,)
+            except ValueError:
+                raise TypeError('required arguments for database import not '\
+                                'specified')
+        if model == "linear":
+            aero_data = np.loadtxt(file_name, delimiter=",", skiprows=1)
+            b2w_params = zip(aero_data[:, -6],
+                                    aero_data[:, -5],
+                                    aero_data[:, -4],
+                                    np.deg2rad(aero_data[:, 0]),
+                                    np.deg2rad(aero_data[:, 1]))
+            aero_data[:, -6] = [self._bf2w_drag(*args) for args in b2w_params]
+            aero_data[:, -5] = [self._bf2w_side(*args) for args in b2w_params]
+            aero_data[:, -4] = [self._bf2w_lift(*args) for args in b2w_params]
+            aero_data[:, 5] *= self.b_ref/(2.*self.V)
+            aero_data[:, 6] *= self.c_ref/(2.*self.V)
+            aero_data[:, 7] *= self.b_ref/(2.*self.V)
+            self._linear_fits(aero_data)
+            self.c_l = lambda x: self.coeffs_lift[0] + self.coeffs_lift[1:]*x
+            self.c_s = lambda x: self.coeffs_side*x
+            self.c_d = lambda x: (self.coeffs_drag[0] +
+                                  self.coeffs_drag[1]*self.c_l(x) +
+                                  self.coeffs_drag[2]*self.c_l(x)**2 +
+                                  self.coeffs_drag[3]*self.c_s(x)**2 +
+                                  self.coeffs_drag[4:]*x)
+            self.c_ell = lambda x: self.coeffs_roll*x
+            self.c_m = lambda x: self.coeffs_pitch[0] + self.coeffs_pitch[1:]*x
+            self.c_n = lambda x: self.coeffs_yaw*x
+
+        elif model == "morelli":
+            pass
+        else:
+            # Get rid of this and implement the version in example.py. Perhaps
+            # force the user to simply specify it as a list always.
+            database_params = kwargs.get("database_params", False)
+            if not database_params:
+                try:
+                    int(num_pts_per_dimension)
+                except TypeError:
+                    raise TypeError("Please specify `database_params` if " \
+                                    "`num_pts_per_dimension` is not an " \
+                                    "integer.")
+                database_params = np.zeros((num_dimensions, num_pts_per_dimension))
+                for i in range(num_dimensions):
+                    database_params[i, :] = np.linspace(dimension_lims[i][0],
+                                                        dimension_lims[i][1],
+                                                        num_pts_per_dimension)
+                database_params = tuple(database_params)
+            if file_name[-4:] == '.csv':
+                data_in, data_nd_array = self._import_csv(file_name,
+                                                          num_dimensions,
+                                                          num_pts_per_dimension,
+                                                          header_titles)
+                if save_sorted:
+                    data_in.to_csv("./" + file_name[:-4] + "_sorted.csv")
+                if save_numpy:
+                    np.save("./" + file_name[:-4] + ".npy", data_nd_array)
+            if file_name[-4:] == '.npy':
+                data_nd_array = np.load(file_name)
+            self._save_aero_data(data_nd_array, database_params)
+
 
     def _import_csv(
             self, file_name, num_dimensions, num_pts_per_dimension,
@@ -491,6 +529,82 @@ class TrimCase:
         self.c_m = rgi(database_params, aero_data[..., 4], **rgi_options)
         self.c_n = rgi(database_params, aero_data[..., 5], **rgi_options)
 
+    def _linear_fits(self, aero_data):
+        N = len(aero_data[:, 0])
+        A = np.zeros((N, 9))
+        b_lift = aero_data[:, -4]
+        b_side = aero_data[:, -5]
+        b_drag = aero_data[:, -6]
+        b_roll = aero_data[:, -3]
+        b_pitch = aero_data[:, -2]
+        b_yaw = aero_data[:, -1]
+        alpha = np.deg2rad(aero_data[:, 0])
+        beta = np.deg2rad(aero_data[:, 1])
+        d_e = np.deg2rad(aero_data[:, 2])
+        d_a = np.deg2rad(aero_data[:, 3])
+        d_r = np.deg2rad(aero_data[:, 4])
+        pbar = aero_data[:, 5]
+        qbar = aero_data[:, 6]
+        rbar = aero_data[:, 7]
+
+        A[:, 0] = 1.
+        A[:, 1] = alpha
+        A[:, 2] = beta
+        A[:, 3] = pbar
+        A[:, 4] = qbar
+        A[:, 5] = rbar
+        A[:, 6] = d_a
+        A[:, 7] = d_e
+        A[:, 8] = d_r
+
+        lst_sq_res = np.linalg.lstsq(A, b_lift, rcond=None)
+        self.coeffs_lift = lst_sq_res[0]
+        lst_sq_res = np.linalg.lstsq(A, b_pitch, rcond=None)
+        self.coeffs_pitch = lst_sq_res[0]
+
+        lst_sq_res = np.linalg.lstsq(A, b_side, rcond=None)
+        self.coeffs_side = lst_sq_res[0]
+        lst_sq_res = np.linalg.lstsq(A, b_roll, rcond=None)
+        self.coeffs_roll = lst_sq_res[0]
+        lst_sq_res = np.linalg.lstsq(A, b_yaw, rcond=None)
+        self.coeffs_yaw = lst_sq_res[0]
+
+
+        A = np.zeros((N, 10))
+        A[:, 0] = 1.
+        A[:, 1] = b_lift
+        A[:, 2] = np.square(b_lift)
+        A[:, 3] = np.square(b_side)
+        A[:, 4] = pbar
+        A[:, 5] = qbar
+        A[:, 6] = rbar
+        A[:, 7] = d_a
+        A[:, 8] = d_e
+        A[:, 9] = d_r
+
+        lst_sq_res = np.linalg.lstsq(A, b_drag, rcond=None)
+        self.coeffs_drag = lst_sq_res[0]
+
+    def _bf2w_lift(self, Fxb, Fyb, Fzb, alpha, beta):
+        N = -Fzb
+        A = -Fxb
+        L = N*np.cos(alpha) - A*np.sin(alpha)
+        return L
+
+    def _bf2w_side(self, Fxb, Fyb, Fzb, alpha, beta):
+        A = -Fxb
+        Y = Fyb
+        N = -Fzb
+        S = A*np.cos(alpha)*np.sin(beta) + Y*np.cos(beta) + N*np.sin(alpha)*np.sin(beta)
+        return S
+
+    def _bf2w_drag(self, Fxb, Fyb, Fzb, alpha, beta):
+        A = -Fxb
+        Y = Fyb
+        N = -Fzb
+        Dw = A*np.cos(alpha)*np.cos(beta) - Y*np.sin(beta) + N*np.sin(alpha)*np.cos(beta)
+        return Dw
+
     def trim_shss(self, trim_params, **kwargs):
         elevation_angle = kwargs.get("elevation_angle", 0.)
         alpha = trim_params[0]
@@ -503,6 +617,20 @@ class TrimCase:
         rudder_angle = trim_params[4]
         f_xt = trim_params[5]
         vel_bf = self._vel_comp(alpha, beta)
+
+    def trim_sct(self, trim_params, climb_angle=0., load_factor=1.):
+        alpha, beta, d_e, d_a, d_r, f_xt = trim_params
+        vel_bf = self._vel_comp(alpha, beta)
+        bank_angle = self._calc_bank_angle(climb_angle, load_factor, alpha)
+        orientation_climb = [climb_angle, bank_angle]
+        elevation_angle = self._calc_elevation_angle(vel_bf, orientation_climb,
+                                                     self.V)
+        orientation = [elevation_angle, bank_angle]
+        total_forces, total_moments = self._6dof_fm(trim_params[:-1], f_xt,
+                                                    orientation, vel_bf)
+        return np.abs(total_forces + total_moments)
+
+
 
     def _6dof_fm(self, params, f_xt, orientation, vel_bf, **kwargs):
         shss_flag = kwargs.get("shss", False)
@@ -520,7 +648,7 @@ class TrimCase:
                                              s_bank, c_bank],
                                             euler_transform,
                                             u, w)
-        params = list(params[:] + rot_rates)
+        params = list(list(params[:]) + rot_rates)
         aero_forces, aero_moments = self._dimensionalize_aero_fm(params, f_xt)
         weight_forces = self._6dof_weight_forces(euler_transform)
         rot_forces = self._6dof_coriolis_forces(rot_rates, vel_bf)
@@ -586,7 +714,38 @@ class TrimCase:
         p, q, r = [x*constant_coeff for x in euler_transform]
         return [p, q, r]
 
+    def _calc_bank_angle(self, climb_angle, load_factor, alpha):
+        bank_angle = np.arccos(np.cos(climb_angle)/(load_factor*np.cos(alpha)))
+        return bank_angle
 
+    def _calc_elevation_angle(self, vel_bf, orientation, V):
+        [u, v, w] = vel_bf
+        climb_angle, bank_angle = orientation
+        s_climb = np.sin(np.deg2rad(climb_angle))
+        s_bank = np.sin(np.deg2rad(bank_angle))
+        c_bank = np.cos(np.deg2rad(bank_angle))
+        A = (u**2 + s_bank**2*v**2 + 2.*s_bank**2*c_bank**2*v*w +
+             c_bank**2*w**2)
+        B = u
+        C = (s_climb**2*V**2 - s_bank**2*v**2 - 2.*s_bank**2*c_bank**2*v*w -
+             c_bank**2*w**2)
+        elevation_angle_plus = np.arcsin(V*(B + np.sqrt(B**2 - A*C))/A)
+        elevation_angle_minus = np.arcsin(V*(B - np.sqrt(B**2 - A*C))/A)
+        orientation_plus = [elevation_angle_plus, bank_angle]
+        if np.allclose(-np.sin(climb_angle),
+                       self._test_elevation(vel_bf, orientation_plus, V),
+                       atol=1e-12):
+            elevation_angle = np.rad2deg(elevation_angle_plus)
+        else:
+            elevation_angle = np.rad2deg(elevation_angle_minus)
+        return elevation_angle
 
-
+    def _test_elevation(self, vel_bf, orientation, V):
+        [u, v, w] = vel_bf
+        elevation_angle, bank_angle = orientation
+        s_elev = np.sin(np.deg2rad(elevation_angle))
+        c_elev = np.cos(np.deg2rad(elevation_angle))
+        s_bank = np.sin(np.deg2rad(bank_angle))
+        c_bank = np.cos(np.deg2rad(bank_angle))
+        return -s_elev*u/V + s_bank*c_elev*v/V + c_bank*c_elev*w/V
 
