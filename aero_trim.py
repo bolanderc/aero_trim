@@ -714,34 +714,48 @@ class TrimCase:
         bank_angle = np.arccos(np.cos(climb_angle)/(load_factor*np.cos(alpha)))
         return bank_angle
 
-    def _calc_elevation_angle(self, vel_bf, orientation, V):
-        [u, v, w] = vel_bf
+    def _calc_elevation_angle(self, alpha, beta, orientation, V):
         climb_angle, bank_angle = orientation
         s_climb = np.sin(np.deg2rad(climb_angle))
         s_bank = np.sin(np.deg2rad(bank_angle))
         c_bank = np.cos(np.deg2rad(bank_angle))
-        A = (u**2 + s_bank**2*v**2 + 2.*s_bank**2*c_bank**2*v*w +
-             c_bank**2*w**2)
-        B = u
-        C = (s_climb**2*V**2 - s_bank**2*v**2 - 2.*s_bank**2*c_bank**2*v*w -
-             c_bank**2*w**2)
-        elevation_angle_plus = np.arcsin(V*(B + np.sqrt(B**2 - A*C))/A)
-        elevation_angle_minus = np.arcsin(V*(B - np.sqrt(B**2 - A*C))/A)
-        orientation_plus = [elevation_angle_plus, bank_angle]
-        if np.allclose(-np.sin(climb_angle),
-                       self._test_elevation(vel_bf, orientation_plus, V),
+        s_alpha = np.sin(np.deg2rad(alpha))
+        c_alpha = np.cos(np.deg2rad(alpha))
+        s_beta = np.sin(np.deg2rad(beta))
+        c_beta = np.cos(np.deg2rad(beta))
+        A = (c_alpha**2*c_beta**2 + s_bank**2*s_beta**2 +
+             2.*s_bank*c_bank*s_alpha*s_beta*c_beta +
+             c_bank**2*s_alpha**2*c_beta**2)
+        B = -2.*s_climb*c_alpha*c_beta
+        C = (s_climb**2 - s_bank**2*s_beta**2 -
+             2.*s_bank*c_bank*s_alpha*s_beta*c_beta -
+             c_bank**2*s_alpha**2*c_beta**2)
+        elevation_angle_plus = np.arcsin((-B + np.sqrt(B**2 - 4.*A*C))/(2.*A))
+        elevation_angle_minus = np.arcsin((-B - np.sqrt(B**2 - 4.*A*C))/(2.*A))
+        orientation_plus = [np.rad2deg(elevation_angle_plus), bank_angle]
+        orientation_minus = [np.rad2deg(elevation_angle_minus), bank_angle]
+        if np.allclose(-s_climb,
+                       self._test_elevation(alpha, beta, orientation_plus, V),
                        atol=1e-12):
             elevation_angle = np.rad2deg(elevation_angle_plus)
         else:
+            assert np.allclose(-s_climb,
+                               self._test_elevation(alpha, beta,
+                                                    orientation_minus, V),
+                               atol=1e-12)
             elevation_angle = np.rad2deg(elevation_angle_minus)
         return elevation_angle
 
-    def _test_elevation(self, vel_bf, orientation, V):
-        [u, v, w] = vel_bf
+    def _test_elevation(self, alpha, beta, orientation, V):
         elevation_angle, bank_angle = orientation
         s_elev = np.sin(np.deg2rad(elevation_angle))
         c_elev = np.cos(np.deg2rad(elevation_angle))
         s_bank = np.sin(np.deg2rad(bank_angle))
         c_bank = np.cos(np.deg2rad(bank_angle))
-        return -s_elev*u/V + s_bank*c_elev*v/V + c_bank*c_elev*w/V
+        s_alpha = np.sin(np.deg2rad(alpha))
+        c_alpha = np.cos(np.deg2rad(alpha))
+        s_beta = np.sin(np.deg2rad(beta))
+        c_beta = np.cos(np.deg2rad(beta))
+        return (-s_elev*c_alpha*c_beta + s_bank*c_elev*s_beta +
+                c_bank*c_elev*s_alpha*c_beta)
 

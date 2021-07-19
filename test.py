@@ -367,9 +367,34 @@ def test_6dof_fm():
 
 def test_calc_elevation():
     """Tests that the elevation angle is properly calculated."""
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
+    climb = 0.
+    bank = 0.
+    alpha = 0.
+    beta = 0.
+    elevation = trim_case._calc_elevation_angle(alpha, beta,
+                                                [climb, bank], V_FREE)
+    elevation_check1 = np.allclose(elevation, 0., atol=1e-12)
 
+    climb = 20.
+    alpha = 20.
+    elevation = trim_case._calc_elevation_angle(alpha, beta,
+                                                [climb, bank], V_FREE)
+    elevation_check2 = np.allclose(elevation, alpha + climb, atol=1e-12)
 
+    climb = -5.
+    alpha = 5.
+    elevation = trim_case._calc_elevation_angle(alpha, beta,
+                                                [climb, bank], V_FREE)
+    elevation_check3 = np.allclose(elevation, alpha + climb, atol=1e-12)
 
+    climb = 10.
+    alpha = 10.
+    bank = 90.
+    beta = 60.
+    elevation = trim_case._calc_elevation_angle(alpha, beta,
+                                                [climb, bank], V_FREE)
+    assert elevation_check1*elevation_check2*elevation_check3
 
 
 V_FREE, RHO_FREE = 100., 0.0023084
