@@ -86,10 +86,109 @@ def test_save_aero_data():
                               atol=10e-12)
     assert force_test*moment_test
 
+def test_b2w_conversions():
+    """Tests that force conversions from the body-fixed frame to the wind frame
+    are calculated properly.
+    """
+    alpha = 5.  # deg.
+    beta = 10.  # deg.
+    c_a = np.cos(np.deg2rad(alpha))
+    s_a = np.sin(np.deg2rad(alpha))
+    c_b = np.cos(np.deg2rad(beta))
+    s_b = np.sin(np.deg2rad(beta))
+    body2stab = np.array([[c_a, 0., s_a],
+                          [0., 1., 0.],
+                          [-s_a, 0., c_a]])
+    stab2wind = np.array([[c_b, s_b, 0.],
+                          [-s_b, c_b, 0.],
+                          [0., 0., 1.]])
+    body2wind = np.matmul(stab2wind, body2stab)
+    orthogonal_assert = np.linalg.norm(np.matmul(body2wind.T, body2wind) -
+                                       np.eye(3)) < 1e-12
+
+    body_forces = np.array([100., 100., 100.])
+    Fxb, Fyb, Fzb = body_forces
+    L = aero_trim.bf2w_lift(Fxb, Fyb, Fzb, np.deg2rad(alpha), np.deg2rad(beta))
+    D = aero_trim.bf2w_drag(Fxb, Fyb, Fzb, np.deg2rad(alpha), np.deg2rad(beta))
+    S = aero_trim.bf2w_side(Fxb, Fyb, Fzb, np.deg2rad(alpha), np.deg2rad(beta))
+    wind_forces = np.matmul(body2wind, body_forces)
+    wind_forces[0] *= -1.
+    wind_forces[2] *= -1.
+    force_assert = np.linalg.norm(wind_forces - np.array([D, S, L])) < 1e-12
+    assert orthogonal_assert*force_assert
+
+def test_database_conversion():
+    """Tests that the database conversion for the linear fits is performed
+    properly.
+    """
+    database_file_name = "./misc/TODatabase_body_3all.csv"
+    v_free, rho_free = 222.5211, 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    aero_data = np.loadtxt(database_file_name, delimiter=",", skiprows=1)
+    aero_data_check = np.copy(aero_data)
+    converted_aero_data = trim_case._data_conversion(aero_data)
+    N = len(aero_data[:, 0])
+    pbar = np.zeros(N)
+    qbar = np.zeros(N)
+    rbar = np.zeros(N)
+    CD = np.zeros(N)
+    CS = np.zeros(N)
+    CL = np.zeros(N)
+    alpha_rad = np.deg2rad(aero_data_check[:, 0])
+    beta_rad = np.deg2rad(aero_data_check[:, 1])
+    for i in range(N):
+        pbar[i] = aero_data_check[i, 5]*trim_case.lat_ref_len/(2.*trim_case.V)
+        qbar[i] = aero_data_check[i, 6]*trim_case.lon_ref_len/(2.*trim_case.V)
+        rbar[i] = aero_data_check[i, 7]*trim_case.lat_ref_len/(2.*trim_case.V)
+        CD[i] = aero_trim.bf2w_drag(aero_data_check[i, 8], aero_data_check[i, 9],
+                                    aero_data_check[i, 10], alpha_rad[i],
+                                    beta_rad[i])
+        CS[i] = aero_trim.bf2w_side(aero_data_check[i, 8], aero_data_check[i, 9],
+                                    aero_data_check[i, 10], alpha_rad[i],
+                                    beta_rad[i])
+        CL[i] = aero_trim.bf2w_lift(aero_data_check[i, 8], aero_data_check[i, 9],
+                                    aero_data_check[i, 10], alpha_rad[i],
+                                    beta_rad[i])
+    aero_data_check[:, 5] = pbar
+    aero_data_check[:, 6] = qbar
+    aero_data_check[:, 7] = rbar
+    aero_data_check[:, -6] = CD
+    aero_data_check[:, -5] = CS
+    aero_data_check[:, -4] = CL
+    diff_conv = np.abs(converted_aero_data - aero_data_check)
+    conversion_check = np.linalg.norm(diff_conv) < 1e-12
+    assert conversion_check
+
+def test_linear_model():
+    """Tests that the coefficients of the linear model are calculated
+    correctly.
+    """
+    database_file_name = "./misc/TODatabase_body_3all.csv"
+    v_free, rho_free = 222.5211, 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case.import_aero_data(database_file_name, model="linear")
+    lift_coeffs_obs = [8.757199079141e-02, 4.031411055571e+00,
+                       -2.175295766053e-12, -5.769614431381e-14,
+                       3.735093201199e+00, 8.564535730596e-12,
+                       2.684688931344e-07, 6.340879225759e-01,
+                       -8.310767411173e-08]
+    drag_coeffs_obs = [6.872528951111e-02, 2.857818487492e-03,
+                       1.051037229970e-01, 2.148078531185e-01,
+                       -3.666540252514e-14, 3.671443148435e-02,
+                       -4.772459354103e-12, -5.018999387633e-07,
+                       -7.673321083839e-03, -1.407066136080e-07]
+    lift_assert = [abs(fit - obs) for fit,obs in zip(trim_case.coeffs_lift,
+                                                     lift_coeffs_obs)]
+    lift_assert = np.linalg.norm(lift_assert) < 1e-12
+    drag_assert = [abs(fit - obs) for fit,obs in zip(trim_case.coeffs_drag,
+                                                     drag_coeffs_obs)]
+    drag_assert = np.linalg.norm(drag_assert) < 1e-12
+    assert lift_assert*drag_assert
+
+
 def test_vel_comp():
     """Tests that the velocity components are calculated properly."""
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     alpha = 5.  # deg.
     beta = 10.  # deg.
     v_bf = trim_case._vel_comp(alpha, beta)
@@ -100,8 +199,7 @@ def test_sct_rot_rates():
     """Tests that the rotation rates are calculated properly for the steady-
     coordinated turn.
     """
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     elevation_angle = 10.  # deg.
     bank_angle = 20.  # deg.
     s_elev = np.sin(np.deg2rad(elevation_angle))
@@ -121,8 +219,7 @@ def test_sct_rot_rates():
 
 def test_dimensionalize_aero_fm():
     """Tests that the aerodynamic coefficients are dimensionalized properly."""
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     trim_case.import_aero_data(TEST_DATA_FILE_NAME, NUM_DIMENSIONS,
                                NUM_PTS_PER_DIMENSION, DIMENSION_LIMS)
     alpha = 10.
@@ -148,8 +245,7 @@ def test_weight_forces():
     """Tests that the 6DOF equation outputs the correct forces due to
     orientation.
     """
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     elevation_angle = 5.
     bank_angle = 5.
     s_elev = np.sin(np.deg2rad(elevation_angle))
@@ -166,8 +262,7 @@ def test_coriolis_forces():
     """Tests that the 6DOF equation outputs the correct forces Coriolis
     effects.
     """
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     elevation_angle = 5.
     bank_angle = 5.
     alpha = 10.
@@ -190,8 +285,7 @@ def test_rotor_moments():
     """Tests that the 6DOF equation outputs the correct moments due to
     spinning rotors.
     """
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     elevation_angle = 5.
     bank_angle = 5.
     alpha = 10.
@@ -213,8 +307,7 @@ def test_coriolis_moments():
     """Tests that the 6DOF equation outputs the correct moments due to
     Coriolis effects.
     """
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     elevation_angle = 5.
     bank_angle = 5.
     alpha = 10.
@@ -235,8 +328,7 @@ def test_coriolis_moments():
 
 def test_6dof_fm():
     """Tests that the 6DOF equation outputs the correct forces and moments. """
-    v_free, rho_free = 100., 0.0023084
-    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     trim_case.import_aero_data(TEST_DATA_FILE_NAME, NUM_DIMENSIONS,
                                 NUM_PTS_PER_DIMENSION, DIMENSION_LIMS)
     alpha = 10.
@@ -280,6 +372,7 @@ def test_calc_elevation():
 
 
 
+V_FREE, RHO_FREE = 100., 0.0023084
 TEST_DATA_FILE_NAME = os.path.join("misc", "test_database.csv")
 DIMENSION_LIMS = [(-15., 15.),
                   (-15., 15.),

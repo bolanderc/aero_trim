@@ -16,6 +16,18 @@ from scipy.interpolate import RegularGridInterpolator as rgi
 import scipy.optimize as optimize
 
 
+def bf2w_lift(Fxb, Fyb, Fzb, alpha, beta):
+    Fzw = -Fxb*np.sin(alpha) + Fzb*np.cos(alpha)
+    return -Fzw
+
+def bf2w_side(Fxb, Fyb, Fzb, alpha, beta):
+    Fyw = -Fxb*np.cos(alpha)*np.sin(beta) + Fyb*np.cos(beta) - Fzb*np.sin(alpha)*np.sin(beta)
+    return Fyw
+
+def bf2w_drag(Fxb, Fyb, Fzb, alpha, beta):
+    Fxw = Fxb*np.cos(alpha)*np.cos(beta) + Fyb*np.sin(beta) + Fzb*np.sin(alpha)*np.cos(beta)
+    return -Fxw
+
 class TrimCase:
     """Trims an aircraft given an aerodynamic database.
 
@@ -344,18 +356,8 @@ class TrimCase:
                                 'specified')
         if model == "linear":
             aero_data = np.loadtxt(file_name, delimiter=",", skiprows=1)
-            b2w_params = zip(aero_data[:, -6],
-                                    aero_data[:, -5],
-                                    aero_data[:, -4],
-                                    np.deg2rad(aero_data[:, 0]),
-                                    np.deg2rad(aero_data[:, 1]))
-            aero_data[:, -6] = [self._bf2w_drag(*args) for args in b2w_params]
-            aero_data[:, -5] = [self._bf2w_side(*args) for args in b2w_params]
-            aero_data[:, -4] = [self._bf2w_lift(*args) for args in b2w_params]
-            aero_data[:, 5] *= self.b_ref/(2.*self.V)
-            aero_data[:, 6] *= self.c_ref/(2.*self.V)
-            aero_data[:, 7] *= self.b_ref/(2.*self.V)
-            self._linear_fits(aero_data)
+            converted_aero_data = self._data_conversion(aero_data)
+            self._linear_fits(converted_aero_data)
             self.c_l = lambda x: self.coeffs_lift[0] + self.coeffs_lift[1:]*x
             self.c_s = lambda x: self.coeffs_side*x
             self.c_d = lambda x: (self.coeffs_drag[0] +
@@ -585,25 +587,19 @@ class TrimCase:
         lst_sq_res = np.linalg.lstsq(A, b_drag, rcond=None)
         self.coeffs_drag = lst_sq_res[0]
 
-    def _bf2w_lift(self, Fxb, Fyb, Fzb, alpha, beta):
-        N = -Fzb
-        A = -Fxb
-        L = N*np.cos(alpha) - A*np.sin(alpha)
-        return L
-
-    def _bf2w_side(self, Fxb, Fyb, Fzb, alpha, beta):
-        A = -Fxb
-        Y = Fyb
-        N = -Fzb
-        S = A*np.cos(alpha)*np.sin(beta) + Y*np.cos(beta) + N*np.sin(alpha)*np.sin(beta)
-        return S
-
-    def _bf2w_drag(self, Fxb, Fyb, Fzb, alpha, beta):
-        A = -Fxb
-        Y = Fyb
-        N = -Fzb
-        Dw = A*np.cos(alpha)*np.cos(beta) - Y*np.sin(beta) + N*np.sin(alpha)*np.cos(beta)
-        return Dw
+    def _data_conversion(self, aero_data):
+        b2w_params = np.copy(np.array([aero_data[:, -6],
+                                       aero_data[:, -5],
+                                       aero_data[:, -4],
+                                       np.deg2rad(aero_data[:, 0]),
+                                       np.deg2rad(aero_data[:, 1])])).T
+        aero_data[:, -6] = [bf2w_drag(*args,) for args in b2w_params]
+        aero_data[:, -5] = [bf2w_side(*args,) for args in b2w_params]
+        aero_data[:, -4] = [bf2w_lift(*args,) for args in b2w_params]
+        aero_data[:, 5] *= self.lat_ref_len/(2.*self.V)
+        aero_data[:, 6] *= self.lon_ref_len/(2.*self.V)
+        aero_data[:, 7] *= self.lat_ref_len/(2.*self.V)
+        return aero_data
 
     def trim_shss(self, trim_params, **kwargs):
         elevation_angle = kwargs.get("elevation_angle", 0.)
