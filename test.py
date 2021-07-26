@@ -189,10 +189,10 @@ def test_linear_model():
 def test_vel_comp():
     """Tests that the velocity components are calculated properly."""
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    alpha = 5.  # deg.
-    beta = 10.  # deg.
+    alpha = np.deg2rad(5.)  # deg.
+    beta = np.deg2rad(10.)  # deg.
     v_bf = trim_case._vel_comp(alpha, beta)
-    v_bf_analytical = [98.1172637986292, 17.300720880988255, 8.58414827856259]
+    v_bf_analytical = [98.1060262190407, 17.364817766693033, 8.583165117743128]
     assert np.allclose(v_bf, v_bf_analytical, atol=1e-13)
 
 def test_sct_rot_rates():
@@ -200,21 +200,21 @@ def test_sct_rot_rates():
     coordinated turn.
     """
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    elevation_angle = 10.  # deg.
-    bank_angle = 20.  # deg.
-    s_elev = np.sin(np.deg2rad(elevation_angle))
-    c_elev = np.cos(np.deg2rad(elevation_angle))
-    s_bank = np.sin(np.deg2rad(bank_angle))
-    c_bank = np.cos(np.deg2rad(bank_angle))
+    elevation_angle = np.deg2rad(10.)  # deg.
+    bank_angle = np.deg2rad(20.)  # deg.
+    s_elev = np.sin(elevation_angle)
+    c_elev = np.cos(elevation_angle)
+    s_bank = np.sin(bank_angle)
+    c_bank = np.cos(bank_angle)
     sc_angles = [s_elev, c_elev, s_bank, c_bank]
     orientation_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
-    alpha = 5  # deg.
-    beta = 10.  # deg.
+    alpha = np.deg2rad(5.)  # deg.
+    beta = np.deg2rad(10.)  # deg.
     [u, v, w] = trim_case._vel_comp(alpha, beta)
     rot_rates = trim_case._sct_rot_rates(sc_angles, orientation_transform,
                                          u, w)
-    rot_rates_analytical = [-0.020406793394732076, 0.039582906561664424,
-                            0.10875314197455521]
+    rot_rates_analytical = [-0.02040913089604323, 0.03958744059570875,
+                            0.10876559913071102]
     assert np.allclose(rot_rates, rot_rates_analytical, atol=1e-13)
 
 def test_dimensionalize_aero_fm():
@@ -246,12 +246,12 @@ def test_weight_forces():
     orientation.
     """
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    elevation_angle = 5.
-    bank_angle = 5.
-    s_elev = np.sin(np.deg2rad(elevation_angle))
-    c_elev = np.cos(np.deg2rad(elevation_angle))
-    s_bank = np.sin(np.deg2rad(bank_angle))
-    c_bank = np.cos(np.deg2rad(bank_angle))
+    elevation_angle = np.deg2rad(5.)
+    bank_angle = np.deg2rad(5.)
+    s_elev = np.sin(elevation_angle)
+    c_elev = np.cos(elevation_angle)
+    s_bank = np.sin(bank_angle)
+    c_bank = np.cos(bank_angle)
     euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
     f_weight = trim_case._6dof_weight_forces(euler_transform)
     f_weight_test = [-1786.6927263269924, 1779.893821086036,
@@ -263,14 +263,14 @@ def test_coriolis_forces():
     effects.
     """
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    elevation_angle = 5.
-    bank_angle = 5.
-    alpha = 10.
-    beta = 0.
-    s_elev = np.sin(np.deg2rad(elevation_angle))
-    c_elev = np.cos(np.deg2rad(elevation_angle))
-    s_bank = np.sin(np.deg2rad(bank_angle))
-    c_bank = np.cos(np.deg2rad(bank_angle))
+    elevation_angle = np.deg2rad(5.)
+    bank_angle = np.deg2rad(5.)
+    alpha = np.deg2rad(10.)
+    beta = np.deg2rad(0.)
+    s_elev = np.sin(elevation_angle)
+    c_elev = np.cos(elevation_angle)
+    s_bank = np.sin(bank_angle)
+    c_bank = np.cos(bank_angle)
     euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
     sc_angles = [s_elev, c_elev, s_bank, c_bank]
     vel_bf = trim_case._vel_comp(alpha, beta)
@@ -286,14 +286,14 @@ def test_rotor_moments():
     spinning rotors.
     """
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    elevation_angle = 5.
-    bank_angle = 5.
-    alpha = 10.
-    beta = 0.
-    s_elev = np.sin(np.deg2rad(elevation_angle))
-    c_elev = np.cos(np.deg2rad(elevation_angle))
-    s_bank = np.sin(np.deg2rad(bank_angle))
-    c_bank = np.cos(np.deg2rad(bank_angle))
+    elevation_angle = np.deg2rad(5.)
+    bank_angle = np.deg2rad(5.)
+    alpha = np.deg2rad(10.)
+    beta = np.deg2rad(0.)
+    s_elev = np.sin(elevation_angle)
+    c_elev = np.cos(elevation_angle)
+    s_bank = np.sin(bank_angle)
+    c_bank = np.cos(bank_angle)
     euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
     sc_angles = [s_elev, c_elev, s_bank, c_bank]
     vel_bf = trim_case._vel_comp(alpha, beta)
@@ -308,14 +308,14 @@ def test_coriolis_moments():
     Coriolis effects.
     """
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    elevation_angle = 5.
-    bank_angle = 5.
-    alpha = 10.
-    beta = 0.
-    s_elev = np.sin(np.deg2rad(elevation_angle))
-    c_elev = np.cos(np.deg2rad(elevation_angle))
-    s_bank = np.sin(np.deg2rad(bank_angle))
-    c_bank = np.cos(np.deg2rad(bank_angle))
+    elevation_angle = np.deg2rad(5.)
+    bank_angle = np.deg2rad(5.)
+    alpha = np.deg2rad(10.)
+    beta = np.deg2rad(0.)
+    s_elev = np.sin(elevation_angle)
+    c_elev = np.cos(elevation_angle)
+    s_bank = np.sin(bank_angle)
+    c_bank = np.cos(bank_angle)
     euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
     sc_angles = [s_elev, c_elev, s_bank, c_bank]
     vel_bf = trim_case._vel_comp(alpha, beta)
@@ -331,15 +331,15 @@ def test_6dof_fm():
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
     trim_case.import_aero_data(TEST_DATA_FILE_NAME, NUM_DIMENSIONS,
                                 NUM_PTS_PER_DIMENSION, DIMENSION_LIMS)
-    alpha = 10.
+    alpha = np.deg2rad(10.)
     beta = 0.
     d_e = 0.
     d_a = 0.
-    d_r = 10.
+    d_r = np.deg2rad(10.)
     f_xt = 100.
     params = [alpha, beta, d_e, d_a, d_r]
-    theta = 5.
-    phi = 5.
+    theta = np.deg2rad(5.)
+    phi = np.deg2rad(5.)
     orientation = [theta, phi]
     vel_bf = trim_case._vel_comp(alpha, beta)
     forces, moments = trim_case._6dof_fm(params, f_xt, orientation, vel_bf)
@@ -372,29 +372,76 @@ def test_calc_elevation():
     bank = 0.
     alpha = 0.
     beta = 0.
-    elevation = trim_case._calc_elevation_angle(alpha, beta,
-                                                [climb, bank], V_FREE)
+    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
     elevation_check1 = np.allclose(elevation, 0., atol=1e-12)
 
-    climb = 20.
-    alpha = 20.
-    elevation = trim_case._calc_elevation_angle(alpha, beta,
-                                                [climb, bank], V_FREE)
+    climb = np.deg2rad(20.)
+    alpha = np.deg2rad(20.)
+    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
     elevation_check2 = np.allclose(elevation, alpha + climb, atol=1e-12)
 
-    climb = -5.
-    alpha = 5.
-    elevation = trim_case._calc_elevation_angle(alpha, beta,
-                                                [climb, bank], V_FREE)
+    climb = np.deg2rad(-5.)
+    alpha = np.deg2rad(5.)
+    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
     elevation_check3 = np.allclose(elevation, alpha + climb, atol=1e-12)
 
-    climb = 10.
-    alpha = 10.
-    bank = 90.
-    beta = 60.
-    elevation = trim_case._calc_elevation_angle(alpha, beta,
-                                                [climb, bank], V_FREE)
+    climb = np.deg2rad(10.)
+    alpha = np.deg2rad(10.)
+    bank = np.deg2rad(90.)
+    beta = np.deg2rad(60.)
+    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
     assert elevation_check1*elevation_check2*elevation_check3
+
+def test_linear_coefficient_conversion():
+    """Tests that the conversion of linear coefficients are correct."""
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
+    database_file_name = "./misc/TODatabase_body_3all.csv"
+    trim_case.import_aero_data(database_file_name, model='linear')
+    params = np.deg2rad([10., 10., 0., 0., 0., 0., 0., 0.])
+    alpha = params[0]
+    beta = params[1]
+    CX = trim_case.c_x(params)
+    CY = trim_case.c_y(params)
+    CZ = trim_case.c_z(params)
+    CL = trim_case.c_l(params)
+    CS = trim_case.c_s(params)
+    CD = trim_case.c_d(params)
+    CX_calc = -(CD*np.cos(alpha)*np.cos(beta) + CS*np.cos(alpha)*np.sin(beta) -
+                CL*np.sin(alpha))
+    CY_calc = CS*np.cos(beta) - CD*np.sin(beta)
+    CZ_calc = -(CD*np.sin(alpha)*np.cos(beta) + CS*np.sin(alpha)*np.sin(beta) +
+                CL*np.cos(alpha))
+    x_assert = np.abs(CX[0] - CX_calc) <= 1e-12
+    y_assert = np.abs(CY[0] - CY_calc) <= 1e-12
+    z_assert = np.abs(CZ[0] - CZ_calc) <= 1e-12
+    assert x_assert*y_assert*z_assert
+
+def test_calc_bank_angle():
+    """ Tests that the bank angle is correctly calculated in a steady
+    coordinated turn given the load factor and climb angle.
+    """
+    trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
+    climb_angle = np.deg2rad(10.)
+    n = 2.
+    phi = np.rad2deg(trim_case._calc_bank_angle(climb_angle, n))
+    phi_analytical = 60.50129576889634
+    assert np.abs(phi - phi_analytical) <= 1e-12
+
+
+def test_sct_trim():
+    v_free, rho_free = 222.5211, 0.0023084
+    trim_case = aero_trim.TrimCase(v_free, rho_free)
+    trim_case.import_aero_data("./misc/TODatabase_body_3all.csv",
+                               model='linear')
+    climb_angle = 10.
+    load_factor = 2.
+    trim_case.trim(climb_angle=climb_angle, load_factor=load_factor)
+    load_calculated = np.cos(trim_case.climb_angle)/np.cos(trim_case.bank_angle)
+    load_assert = np.abs(load_factor - load_calculated) <= 1e-12
+    elevation_angle = np.rad2deg(trim_case.elevation_angle)
+    trim_aoa = np.rad2deg(trim_case.trim_state[0])
+    elev_assert = np.abs(elevation_angle - trim_aoa - climb_angle) <= 1e-12
+    assert load_assert*elev_assert
 
 
 V_FREE, RHO_FREE = 100., 0.0023084

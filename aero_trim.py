@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import warnings
 import sys
+import scipy.optimize as optimize
 
 from scipy.interpolate import RegularGridInterpolator as rgi
 import scipy.optimize as optimize
@@ -297,6 +298,10 @@ class TrimCase:
             in each dimension of the aerodynamic database. Should be specified
             if `num_pts_per_dimension` is not constant.
 
+        model : str, default='database'
+            One of 'linear', 'morelli', or 'database' depending on which
+            aerodynamic model is desired for the aerodynamic coefficients.
+
         Methods
         -------
         _import_csv(file_name, num_dimensions, num_pts_per_dimension,
@@ -309,6 +314,19 @@ class TrimCase:
         _save_aero_data(aero_data, database_params)
             Saves the aerodynamic database into force and moment function
             class attributes that can be called by the trim algorithm.
+
+        _data_conversion(aero_data)
+            Converts body-fixed aerodynamic force coefficients to the wind
+            frame for the linear least-squares model. Also converts
+            dimensioned rotation rates to dimensionless rates.
+
+        _linear_fits(converted_aero_data)
+            Takes converted aerodynamic data and calculates linear least-
+            squares coefficients according to the chosen aerodynamic model.
+
+        _w2b_linear_coeffs_conversion()
+            Converts linear least-squares coefficients in the wind frame to
+            coefficients in the body-fixed frame for the trim algorithm.
 
         Raises
         ------
@@ -338,8 +356,16 @@ class TrimCase:
                               (-1.2, 1.2),
                               (-1.2, 1.2),
                               (-0.3925, 0.3925)]
-        >>> trim_case.import_aero_data(test_data_file_name, num_dimensions,
+        >>> trim_case.import_aero_data(file_name, num_dimensions,
                                        num_pts_per_dimension, dimension_lims)
+
+        >>> import aero_trim
+        >>>
+        >>>
+        >>> file_name = "test_database.csv"
+        >>> v_free, rho_free = 222.5211, 0.0023084
+        >>> trim_case = aero_trim.TrimCase(v_free, rho_free, units="English")
+        >>> trim_case.import_aero_data(file_name, model='linear')
 
         """
         model = kwargs.get("model", "database")
@@ -355,23 +381,17 @@ class TrimCase:
                 raise TypeError('required arguments for database import not '\
                                 'specified')
         if model == "linear":
+            self.model = "linear"
             aero_data = np.loadtxt(file_name, delimiter=",", skiprows=1)
             converted_aero_data = self._data_conversion(aero_data)
             self._linear_fits(converted_aero_data)
-            self.c_l = lambda x: self.coeffs_lift[0] + self.coeffs_lift[1:]*x
-            self.c_s = lambda x: self.coeffs_side*x
-            self.c_d = lambda x: (self.coeffs_drag[0] +
-                                  self.coeffs_drag[1]*self.c_l(x) +
-                                  self.coeffs_drag[2]*self.c_l(x)**2 +
-                                  self.coeffs_drag[3]*self.c_s(x)**2 +
-                                  self.coeffs_drag[4:]*x)
-            self.c_ell = lambda x: self.coeffs_roll*x
-            self.c_m = lambda x: self.coeffs_pitch[0] + self.coeffs_pitch[1:]*x
-            self.c_n = lambda x: self.coeffs_yaw*x
+            self._w2b_linear_coeffs_conversion()
 
         elif model == "morelli":
+            self.model = "morelli"
             pass
         else:
+            self.model = "database"
             # Get rid of this and implement the version in example.py. Perhaps
             # force the user to simply specify it as a list always.
             database_params = kwargs.get("database_params", False)
@@ -532,6 +552,188 @@ class TrimCase:
         self.c_n = rgi(database_params, aero_data[..., 5], **rgi_options)
 
     def _linear_fits(self, aero_data):
+        """Performs a least-squares fit to generate coefficients for a linear
+        aerodynamic model.
+
+        Takes an aerodynamic database and performs a least-squares fit to
+        construct a linear aerodynamic model. This model is of the form given
+        in the Notes section.
+
+        Parameters
+        ----------
+        aero_data : array_like
+            Aerodynamic data with the data arranged so that the columns are
+            in the order: alpha, beta, d_e, d_a, d_r, pbar, qbar, rbar, C_D,
+            C_S, C_L, C_l, C_m, C_n.
+
+        Attributes
+        ----------
+        coeffs_lift : array_like
+            Linear least-squares coefficients for the lift coefficient.
+
+        CL0 : float
+            Least-squares coefficient for the lift coefficient at zero
+            aerodynamic angles, control surface deflections, and rotation
+            rates.
+
+        CL_alpha : float
+            Least-squares coefficient for the lift slope.
+
+        CL_qbar : float
+            Least-squares coefficient for the change in lift coefficient with
+            respect to the dimensionless pitch rate.
+
+        CL_de : float
+            Least-squares coefficient for the change in lift coefficient with
+            respect to elevator deflection.
+
+        coeffs_pitch : array_like
+            Linear least-squares coefficients for the pitching moment
+            coefficient.
+
+        Cm0 : float
+            Least-squares coefficient for the pitching moment coefficient at
+            zero aerodynamic angles, control surface deflections, and
+            rotation rates.
+
+        Cm_alpha : float
+            Least-squares coefficient for the pitching moment slope.
+
+        Cm_qbar : float
+            Least-squares coefficient for the change in pitching moment
+            coefficient with respect to the dimensionless pitch rate.
+
+        Cm_de : float
+            Least-squares coefficient for the change in pitching moment
+            coefficient with respect to elevator deflection.
+
+        coeffs_side : array_like
+            Linear least-squares coefficients for the side force coefficient.
+
+        CS_beta : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to sideslip angle.
+
+        CS_pbar : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to the dimensionless roll rate.
+
+        CS_rbar : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to the dimensionless yaw rate.
+
+        CS_da : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to aileron deflection.
+
+        CS_dr : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to rudder deflection.
+
+        coeffs_roll : array_like
+            Linear least-squares coefficients for the rolling moment
+            coefficient.
+
+        Cell_beta : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to sideslip angle.
+
+        Cell_pbar : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to the dimensionless roll rate.
+
+        Cell_rbar : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to the dimensionless yaw rate.
+
+        Cell_da : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to aileron deflection.
+
+        Cell_dr : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to rudder deflection.
+
+        coeffs_yaw : array_like
+            Linear least-squares coefficients for the yawing moment
+            coefficient.
+
+        Cn_beta : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to sideslip angle.
+
+        Cn_pbar : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to the dimensionless roll rate.
+
+        Cn_rbar : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to the dimensionless yaw rate.
+
+        Cn_da : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to aileron deflection.
+
+        Cn_dr : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to rudder deflection.
+
+        coeffs_drag : array_like
+            Linear least-squares coefficients for the drag coefficient.
+
+        CD0 : float
+            Least-squares coefficient for the drag coefficient at zero
+            aerodynamic angles, control surface deflections, and rotation
+            rates.
+
+        CD1 : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the lift coefficient.
+
+        CD2 : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the lift coefficient squared.
+
+        CD3 : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the side force coefficient squared.
+
+        CD_qbar : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the dimensionless pitch rate.
+
+        CD_de : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to elevator deflection.
+
+        See Also
+        --------
+        numpy.linalg.lstsq : Return the least-squares solution to a linear
+                             matrix equation.
+
+        Notes
+        -----
+        The linear aerodynamic model is of the form:
+
+            CL = C_L0 + C_L,alpha*alpha + C_L,qbar*qbar + C_L,delta_e*delta_e
+
+            CS = C_S,beta*beta + C_S,pbar*pbar + C_S,rbar*rbar +
+                 C_S,delta_a*delta_a + C_S,delta_r*delta_r
+
+            CD = C_D0 + C_D1*CL + C_D2*CL**2 + C_D3*CS**2 + C_D,qbar*qbar +
+                 C_D,delta_e*delta_e
+
+            Cl = C_l,beta*beta + C_l,pbar*pbar + C_l,rbar*rbar +
+                 C_l,delta_a*delta_a + C_l,delta_r*delta_r
+
+            Cm = C_m0 + C_m,alpha*alpha + C_m,qbar*qbar + C_m,delta_e*delta_e
+
+            Cn = C_n,beta*beta + C_n,pbar*pbar + C_n,rbar*rbar +
+                 C_n,delta_a*delta_a + C_n,delta_r*delta_r
+
+        """
+
+        # Re-organize data
         N = len(aero_data[:, 0])
         A = np.zeros((N, 9))
         b_lift = aero_data[:, -4]
@@ -549,6 +751,7 @@ class TrimCase:
         qbar = aero_data[:, 6]
         rbar = aero_data[:, 7]
 
+        # Construct A matrix for full linear least-squares problem.
         A[:, 0] = 1.
         A[:, 1] = alpha
         A[:, 2] = beta
@@ -559,19 +762,61 @@ class TrimCase:
         A[:, 7] = d_e
         A[:, 8] = d_r
 
+        # Solve for linear least-squares lift coefficients.
         lst_sq_res = np.linalg.lstsq(A, b_lift, rcond=None)
         self.coeffs_lift = lst_sq_res[0]
+
+        # Save relevant coefficients for chosen linear aerodynamic model.
+        self.CL0 = self.coeffs_lift[0]
+        self.CL_alpha = self.coeffs_lift[1]
+        self.CL_qbar = self.coeffs_lift[4]
+        self.CL_de = self.coeffs_lift[7]
+
+        # Solve for linear least-squares pitch coefficients.
         lst_sq_res = np.linalg.lstsq(A, b_pitch, rcond=None)
         self.coeffs_pitch = lst_sq_res[0]
 
+        # Save relevant coefficients for chosen linear aerodynamic model.
+        self.Cm0 = self.coeffs_pitch[0]
+        self.Cm_alpha = self.coeffs_pitch[1]
+        self.Cm_qbar = self.coeffs_pitch[4]
+        self.Cm_de = self.coeffs_pitch[7]
+
+        # Solve for linear least-squares side force coefficients.
         lst_sq_res = np.linalg.lstsq(A, b_side, rcond=None)
         self.coeffs_side = lst_sq_res[0]
+
+        # Save relevant coefficients for chosen linear aerodynamic model.
+        self.CS_beta = self.coeffs_side[2]
+        self.CS_pbar = self.coeffs_side[3]
+        self.CS_rbar = self.coeffs_side[5]
+        self.CS_da = self.coeffs_side[6]
+        self.CS_dr = self.coeffs_side[8]
+
+        # Solve for linear least-squares roll coefficients.
         lst_sq_res = np.linalg.lstsq(A, b_roll, rcond=None)
         self.coeffs_roll = lst_sq_res[0]
+
+        # Save relevant coefficients for chosen linear aerodynamic model.
+        self.Cell_beta = self.coeffs_roll[2]
+        self.Cell_pbar = self.coeffs_roll[3]
+        self.Cell_rbar = self.coeffs_roll[5]
+        self.Cell_da = self.coeffs_roll[6]
+        self.Cell_dr = self.coeffs_roll[8]
+
+        # Solve for linear least-squares yaw coefficients.
         lst_sq_res = np.linalg.lstsq(A, b_yaw, rcond=None)
         self.coeffs_yaw = lst_sq_res[0]
 
+        # Save relevant coefficients for chosen linear aerodynamic model.
+        self.Cn_beta = self.coeffs_yaw[2]
+        self.Cn_pbar = self.coeffs_yaw[3]
+        self.Cn_rbar = self.coeffs_yaw[5]
+        self.Cn_da = self.coeffs_yaw[6]
+        self.Cn_dr = self.coeffs_yaw[8]
 
+        # Construct A matrix for linear least-squares problem specific to drag
+        # model.
         A = np.zeros((N, 10))
         A[:, 0] = 1.
         A[:, 1] = b_lift
@@ -584,10 +829,144 @@ class TrimCase:
         A[:, 8] = d_e
         A[:, 9] = d_r
 
+        # Solve for linear least-squares drag coefficients.
         lst_sq_res = np.linalg.lstsq(A, b_drag, rcond=None)
         self.coeffs_drag = lst_sq_res[0]
 
+        # Save relevant coefficients for chosen linear aerodynamic model.
+        self.CD0 = self.coeffs_drag[0]
+        self.CD1 = self.coeffs_drag[1]
+        self.CD2 = self.coeffs_drag[2]
+        self.CD3 = self.coeffs_drag[3]
+        self.CD_qbar = self.coeffs_drag[5]
+        self.CD_de = self.coeffs_drag[8]
+
+    def _w2b_linear_coeffs_conversion(self):
+        """Converts linear least-squares coefficients to the body-fixed frame.
+
+        Using the linear least-squares force coefficients calculated in the
+        method `_linear_fits`, which are calculated in the wind frame, the
+        force coefficients are converted to the body-fixed frame and functions
+        are created for each of the body-fixed force and moment coefficients.
+        The aerodynamic moment coefficients are already in the body-fixed
+        frame and therefore need only be assigned to a function. See the Notes
+        section for the order of the function parameters.
+
+        Attributes
+        ----------
+        c_l : function
+            Function taking aerodynamic parameters and returning the lift
+            coefficient calculated using the linear model.
+
+        c_s : function
+            Function taking aerodynamic parameters and returning the side force
+            coefficient calculated using the linear model.
+
+        c_d : function
+            Function taking aerodynamic parameters and returning the drag
+            coefficient calculated using the linear model.
+
+        c_x : function
+            Function taking aerodynamic parameters and returning the force
+            coefficient in the x-direction using the linear model.
+
+        c_y : function
+            Function taking aerodynamic parameters and returning the force
+            coefficient in the y-direction using the linear model.
+
+        c_z : function
+            Function taking aerodynamic parameters and returning the force
+            coefficient in the z-direction using the linear model.
+
+        c_ell : function
+            Function taking aerodynamic parameters and returning the rolling
+            moment coefficient using the linear model.
+
+        c_m : function
+            Function taking aerodynamic parameters and returning the pitching
+            moment coefficient using the linear model.
+
+        c_n : function
+            Function taking aerodynamic parameters and returning the yawing
+            moment coefficient using the linear model.
+
+        Notes
+        -----
+        The parameters for all coefficients are in the order:
+            alpha, beta, d_a, d_e, d_r, p, q, r
+
+        """
+        # Note that the inputs `x` are all in radians.
+        self.c_l = lambda x: (self.CL0 +
+                              self.CL_alpha*x[0] +
+                              self.CL_qbar*x[6] +
+                              self.CL_de*x[3])
+        self.c_s = lambda x: (self.CS_beta*x[1] +
+                              self.CS_pbar*x[5] +
+                              self.CS_rbar*x[7] +
+                              self.CS_da*x[2] +
+                              self.CS_dr*x[4])
+        self.c_d = lambda x: (self.CD0 + self.CD1*self.c_l(x) +
+                              self.CD2*self.c_l(x)**2 +
+                              self.CD3*self.c_s(x)**2 +
+                              self.CD_qbar*x[6] +
+                              self.CD_de*x[3])
+        self.c_x = lambda x: [-(self.c_d(x)*np.cos(x[0])*np.cos(x[1]) +
+                                self.c_s(x)*np.cos(x[0])*np.sin(x[1]) -
+                                self.c_l(x)*np.sin(x[0]))]
+        self.c_y = lambda x: [(self.c_s(x)*np.cos(x[1]) -
+                               self.c_d(x)*np.sin(x[1]))]
+        self.c_z = lambda x: [-(self.c_d(x)*np.sin(x[0])*np.cos(x[1]) +
+                                self.c_s(x)*np.sin(x[0])*np.sin(x[1]) +
+                                self.c_l(x)*np.cos(x[0]))]
+        self.c_ell = lambda x: [(self.Cell_beta*x[1] +
+                                 self.Cell_pbar*x[5] +
+                                 self.Cell_rbar*x[7] +
+                                 self.Cell_da*x[2] +
+                                 self.Cell_dr*x[4])]
+        self.c_m = lambda x: [(self.Cm0 +
+                               self.Cm_alpha*x[0] +
+                               self.Cm_qbar*x[6] +
+                               self.Cm_de*x[3])]
+        self.c_n = lambda x: [(self.Cn_beta*x[1] +
+                               self.Cn_pbar*x[5] +
+                               self.Cn_rbar*x[7] +
+                               self.Cn_da*x[2] +
+                               self.Cn_dr*x[4])]
+
     def _data_conversion(self, aero_data):
+        """Converts aerodynamic data to be used in linear least-squares.
+
+        Aerodynamic data is passed in and the force coefficients are converted
+        from the body-fixed frame to the wind frame so that they are
+        appropriate for the linear aerodynamic model. In addition, the
+        body-fixed rotation rates are non-dimensionalized for the least-squares
+        fits.
+
+        See Also
+        ----------
+        bf2w_drag : Takes the x-, y-, and z-force coefficients in the
+                    body-fixed frame as well as the angle of attack and
+                    sideslip angle (in radians) and returns the drag
+                    coefficient in the wind frame.
+
+        bf2w_side : Takes the x-, y-, and z-force coefficients in the
+                    body-fixed frame as well as the angle of attack and
+                    sideslip angle (in radians) and returns the side force
+                    coefficient in the wind frame.
+
+        bf2w_lift : Takes the x-, y-, and z-force coefficients in the
+                    body-fixed frame as well as the angle of attack and
+                    sideslip angle (in radians) and returns the lift
+                    coefficient in the wind frame.
+
+        Returns
+        -------
+        aero_data : array_like
+            The converted aerodynamic data to be used for the linear least-
+            squares fit.
+
+        """
         b2w_params = np.copy(np.array([aero_data[:, -6],
                                        aero_data[:, -5],
                                        aero_data[:, -4],
@@ -601,30 +980,129 @@ class TrimCase:
         aero_data[:, 7] *= self.lat_ref_len/(2.*self.V)
         return aero_data
 
-    def trim_shss(self, trim_params, **kwargs):
-        elevation_angle = kwargs.get("elevation_angle", 0.)
-        alpha = trim_params[0]
-        if kwargs.get("phi") is None:
-            beta = kwargs.get("beta", trim_params[1])
+    def trim(self, climb_angle=0., load_factor=1., shss=False):
+        """Trims the aircraft.
+
+        With the appropriate aerodynamic database imported and aerodynamic
+        model chosen, the aircraft is trimmed at a specific climb angle and
+        load factor. There is an option to trim the aircraft in a steady
+        coordinated turn (of which steady-level flight is the default) or in
+        steady-heading sideslip, which is useful for analyzing crosswind
+        landings.
+
+        Attributes
+        ----------
+        trim_state : array_like
+            Contains the final trim state of the aircraft in the following
+            order: angle of attack, sideslip (or bank angle), aileron
+            deflection, elevator deflection, rudder deflection, and throttle
+            setting.
+
+        Methods
+        -------
+        _trim_shss(trim_params, climb_angle, **kwargs)
+            Used to trim the aircraft in steady-heading sideslip given a climb
+            angle as well as a sideslip angle or bank angle.
+
+        _trim_sct(trim_params, climb_angle, load_factor)
+            Used to trim the aircraft in a steady coordinated turn given a
+            climb angle and load factor.
+
+
+        See Also
+        --------
+        scipy.optimize.fsolve : Non-linear root finder to find the roots of a
+                                given function.
+
+        """
+        trim_params = np.zeros(6)
+        if shss:
+            args = (np.deg2rad(climb_angle))
+            self.trim_state = optimize.fsolve(self._trim_shss, trim_params,
+                                                args=args)
         else:
-            bank_angle = kwargs.get("bank_angle", trim_params[1])
-        sym_angle = trim_params[2]
-        antsim_angle = trim_params[3]
-        rudder_angle = trim_params[4]
-        f_xt = trim_params[5]
+            self.climb_angle = np.deg2rad(climb_angle)
+            self.load_factor = load_factor
+            self.bank_angle = self._calc_bank_angle(self.climb_angle,
+                                                    load_factor)
+            orientation_climb = [self.climb_angle, self.bank_angle]
+            args = (orientation_climb)
+            # self.trim_state = optimize.minimize(self._trim_sct, trim_params,
+            #                                     args=args).x
+            self.trim_iter = 1
+            self.trim_state = optimize.fsolve(self._trim_sct, trim_params,
+                                              args=args)
+            print(np.cos(self.climb_angle)/np.cos(self.bank_angle))
+            CL_trim = self.c_l([*self.trim_state[:-1], *self.rot_rates])
+            l_w_cond1 = CL_trim*np.cos(self.bank_angle)/(self.W*np.cos(self.climb_angle)/self.nondim_coeff)
+            l_w_cond2 = CL_trim*np.sin(self.bank_angle)/(self.W*np.sin(self.climb_angle)/self.nondim_coeff)
+            print(np.sqrt(l_w_cond1**2 + l_w_cond2**2))
+
+
+    def _trim_shss(self, trim_params, climb_angle, **kwargs):
+        """Function used to find a trim solution for steady-heading sideslip.
+
+        This function, when used in a non-linear solver, gives the parameters
+        needed to trim an aircraft in steady-heading sideslip given a climb
+        angle in addition to either a sideslip angle or bank angle. The
+        trim parameters are, in order: angle of attack, sideslip (or bank
+        angle), aileron deflection, elevator deflection, rudder deflection,
+        and throttle setting.
+
+
+        Parameters
+        ----------
+        trim_params : array_like
+            The trim parameters that will be optimized to return zero forces
+            and moments in the 6 DOF governing equations.
+        climb_angle : float
+            The climb angle at which the aircraft will be trimmed.
+        bank_angle : float, optional
+            The bank angle at which the steady-heading sideslip case will be
+            trimmed.
+        sideslip_angle : float, optional
+            The sideslip angle at which the steady-heading sideslip case will
+            be trimmed.
+
+        Returns
+        -------
+        total_fm : list
+            The total forces and moments acting on the aircraft. These will be
+
+
+        """
+        pass
+
+    def _trim_sct(self, trim_params, orientation_climb):
+        alpha, beta, d_a, d_e, d_r, tau = trim_params
+        # Calculate body-fixed velocities
         vel_bf = self._vel_comp(alpha, beta)
 
-    def trim_sct(self, trim_params, climb_angle=0., load_factor=1.):
-        alpha, beta, d_e, d_a, d_r, f_xt = trim_params
-        vel_bf = self._vel_comp(alpha, beta)
-        bank_angle = self._calc_bank_angle(climb_angle, load_factor, alpha)
-        orientation_climb = [climb_angle, bank_angle]
-        elevation_angle = self._calc_elevation_angle(vel_bf, orientation_climb,
-                                                     self.V)
-        orientation = [elevation_angle, bank_angle]
-        total_forces, total_moments = self._6dof_fm(trim_params[:-1], f_xt,
+        # Calculate elevation angle
+        elevation_angle = self._calc_elevation_angle(alpha, beta,
+                                                     orientation_climb)
+
+        # Calculate rotation rates
+        # Use aero model to find aero angles, throttle setting, and deflections
+        orientation = [elevation_angle, self.bank_angle]
+        total_f, total_m = self._6dof_fm(trim_params[:-1], tau,
                                                     orientation, vel_bf)
-        return np.abs(total_forces + total_moments)
+        total_fm = [abs(fm) for fm in total_f + total_m]
+        output = [*vel_bf, np.rad2deg(self.bank_angle),
+                  np.rad2deg(elevation_angle), *self.rot_rates,
+                  *np.rad2deg(trim_params[:-1]), trim_params[-1]]
+        output_names = ['u', 'v', 'w', '\u03C6', '\u03B8', 'p', 'q', 'r',
+                        '\u03B1', '\u03B2', '\u03B4_a', '\u03B4_e',
+                        '\u03B4_r', '\u03C4']
+        print("Iteration:" + str(self.trim_iter) + "\n")
+        for name, value in zip(output_names, output):
+            print(f'{name:10} ==> {value:3.8}')
+        self.trim_iter += 1
+        print("\n")
+        print(total_fm)
+        self.elevation_angle = elevation_angle
+        return total_fm
+        # return np.linalg.norm(total_forces + total_moments)
 
 
 
@@ -632,18 +1110,16 @@ class TrimCase:
         shss_flag = kwargs.get("shss", False)
         elevation_angle, bank_angle = orientation
         u, v, w = vel_bf
-        s_elev = np.sin(np.deg2rad(elevation_angle))
-        c_elev = np.cos(np.deg2rad(elevation_angle))
-        s_bank = np.sin(np.deg2rad(bank_angle))
-        c_bank = np.cos(np.deg2rad(bank_angle))
+        s_elev = np.sin(elevation_angle)
+        c_elev = np.cos(elevation_angle)
+        s_bank = np.sin(bank_angle)
+        c_bank = np.cos(bank_angle)
         euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
         if shss_flag:
             rot_rates = [0., 0., 0.]
         else:
-            rot_rates = self._sct_rot_rates([s_elev, c_elev,
-                                             s_bank, c_bank],
-                                            euler_transform,
-                                            u, w)
+            rot_rates = self._sct_rot_rates([s_elev, c_elev, s_bank, c_bank],
+                                            euler_transform, u, w)
         params = list(list(params[:]) + rot_rates)
         aero_forces, aero_moments = self._dimensionalize_aero_fm(params, f_xt)
         weight_forces = self._6dof_weight_forces(euler_transform)
@@ -656,6 +1132,7 @@ class TrimCase:
         total_moments = [x + y + z for x, y, z in zip(aero_moments,
                                                       rotor_moments,
                                                       corr_moments)]
+        self.rot_rates = rot_rates
         return total_forces, total_moments
 
     def _6dof_weight_forces(self, euler_transform):
@@ -694,13 +1171,12 @@ class TrimCase:
         return [f_x, f_y, f_z], [m_x, m_y, m_z]
 
     def _vel_comp(self, alpha, beta):
-        s_alpha = np.sin(np.deg2rad(alpha))
-        c_alpha = np.cos(np.deg2rad(alpha))
-        s_beta = np.sin(np.deg2rad(beta))
-        c_beta = np.cos(np.deg2rad(beta))
-        wind_to_body = [c_alpha*c_beta, c_alpha*s_beta, s_alpha*c_beta]
-        const_coeff = self.V/np.sqrt(1 - s_alpha**2*s_beta**2)
-        [u, v, w] = [x*const_coeff for x in wind_to_body]
+        s_alpha = np.sin(alpha)
+        c_alpha = np.cos(alpha)
+        s_beta = np.sin(beta)
+        c_beta = np.cos(beta)
+        wind_to_body = [c_alpha*c_beta, s_beta, s_alpha*c_beta]
+        [u, v, w] = [x*self.V for x in wind_to_body]
         return [u, v, w]
 
     def _sct_rot_rates(self, sc_angles, euler_transform, u, w):
@@ -710,19 +1186,20 @@ class TrimCase:
         p, q, r = [x*constant_coeff for x in euler_transform]
         return [p, q, r]
 
-    def _calc_bank_angle(self, climb_angle, load_factor, alpha):
-        bank_angle = np.arccos(np.cos(climb_angle)/(load_factor*np.cos(alpha)))
+    def _calc_bank_angle(self, climb_angle, load_factor):
+        c_climb = np.cos(climb_angle)
+        bank_angle = np.arccos(c_climb/load_factor)
         return bank_angle
 
-    def _calc_elevation_angle(self, alpha, beta, orientation, V):
+    def _calc_elevation_angle(self, alpha, beta, orientation):
         climb_angle, bank_angle = orientation
-        s_climb = np.sin(np.deg2rad(climb_angle))
-        s_bank = np.sin(np.deg2rad(bank_angle))
-        c_bank = np.cos(np.deg2rad(bank_angle))
-        s_alpha = np.sin(np.deg2rad(alpha))
-        c_alpha = np.cos(np.deg2rad(alpha))
-        s_beta = np.sin(np.deg2rad(beta))
-        c_beta = np.cos(np.deg2rad(beta))
+        s_climb = np.sin(climb_angle)
+        s_bank = np.sin(bank_angle)
+        c_bank = np.cos(bank_angle)
+        s_alpha = np.sin(alpha)
+        c_alpha = np.cos(alpha)
+        s_beta = np.sin(beta)
+        c_beta = np.cos(beta)
         A = (c_alpha**2*c_beta**2 + s_bank**2*s_beta**2 +
              2.*s_bank*c_bank*s_alpha*s_beta*c_beta +
              c_bank**2*s_alpha**2*c_beta**2)
@@ -732,30 +1209,33 @@ class TrimCase:
              c_bank**2*s_alpha**2*c_beta**2)
         elevation_angle_plus = np.arcsin((-B + np.sqrt(B**2 - 4.*A*C))/(2.*A))
         elevation_angle_minus = np.arcsin((-B - np.sqrt(B**2 - 4.*A*C))/(2.*A))
-        orientation_plus = [np.rad2deg(elevation_angle_plus), bank_angle]
-        orientation_minus = [np.rad2deg(elevation_angle_minus), bank_angle]
+        orientation_plus = [elevation_angle_plus, bank_angle]
+        orientation_minus = [elevation_angle_minus, bank_angle]
         if np.allclose(-s_climb,
-                       self._test_elevation(alpha, beta, orientation_plus, V),
+                       self._test_elevation(alpha, beta, orientation_plus),
                        atol=1e-12):
-            elevation_angle = np.rad2deg(elevation_angle_plus)
+            elevation_angle = elevation_angle_plus
         else:
             assert np.allclose(-s_climb,
                                self._test_elevation(alpha, beta,
-                                                    orientation_minus, V),
+                                                    orientation_minus),
                                atol=1e-12)
-            elevation_angle = np.rad2deg(elevation_angle_minus)
+            elevation_angle = elevation_angle_minus
         return elevation_angle
 
-    def _test_elevation(self, alpha, beta, orientation, V):
+    def _test_elevation(self, alpha, beta, orientation):
         elevation_angle, bank_angle = orientation
-        s_elev = np.sin(np.deg2rad(elevation_angle))
-        c_elev = np.cos(np.deg2rad(elevation_angle))
-        s_bank = np.sin(np.deg2rad(bank_angle))
-        c_bank = np.cos(np.deg2rad(bank_angle))
-        s_alpha = np.sin(np.deg2rad(alpha))
-        c_alpha = np.cos(np.deg2rad(alpha))
-        s_beta = np.sin(np.deg2rad(beta))
-        c_beta = np.cos(np.deg2rad(beta))
+        s_elev = np.sin(elevation_angle)
+        c_elev = np.cos(elevation_angle)
+        s_bank = np.sin(bank_angle)
+        c_bank = np.cos(bank_angle)
+        s_alpha = np.sin(alpha)
+        c_alpha = np.cos(alpha)
+        s_beta = np.sin(beta)
+        c_beta = np.cos(beta)
         return (-s_elev*c_alpha*c_beta + s_bank*c_elev*s_beta +
                 c_bank*c_elev*s_alpha*c_beta)
 
+trim_case = TrimCase(222.5211, 0.0023084)
+trim_case.import_aero_data("./misc/TODatabase_body_3all.csv", model='linear')
+trim_case.trim(climb_angle=0., load_factor=1.0)
