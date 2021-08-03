@@ -372,24 +372,28 @@ def test_calc_elevation():
     bank = 0.
     alpha = 0.
     beta = 0.
-    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    elevation = trim_case._calc_elevation_angle(vel_bf, [climb, bank])
     elevation_check1 = np.allclose(elevation, 0., atol=1e-12)
 
     climb = np.deg2rad(20.)
     alpha = np.deg2rad(20.)
-    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    elevation = trim_case._calc_elevation_angle(vel_bf, [climb, bank])
     elevation_check2 = np.allclose(elevation, alpha + climb, atol=1e-12)
 
     climb = np.deg2rad(-5.)
     alpha = np.deg2rad(5.)
-    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    elevation = trim_case._calc_elevation_angle(vel_bf, [climb, bank])
     elevation_check3 = np.allclose(elevation, alpha + climb, atol=1e-12)
 
     climb = np.deg2rad(10.)
     alpha = np.deg2rad(10.)
     bank = np.deg2rad(90.)
     beta = np.deg2rad(60.)
-    elevation = trim_case._calc_elevation_angle(alpha, beta, [climb, bank])
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    elevation = trim_case._calc_elevation_angle(vel_bf, [climb, bank])
     assert elevation_check1*elevation_check2*elevation_check3
 
 def test_linear_coefficient_conversion():
@@ -418,12 +422,12 @@ def test_linear_coefficient_conversion():
 
 def test_calc_bank_angle():
     """ Tests that the bank angle is correctly calculated in a steady
-    coordinated turn given the load factor and climb angle.
+    coordinated turn given the load factor and elevation angle.
     """
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    climb_angle = np.deg2rad(10.)
+    elevation = np.deg2rad(10.)
     n = 2.
-    phi = np.rad2deg(trim_case._calc_bank_angle(climb_angle, n))
+    phi = np.rad2deg(trim_case._calc_bank_angle(elevation, n))
     phi_analytical = 60.50129576889634
     assert np.abs(phi - phi_analytical) <= 1e-12
 
@@ -434,13 +438,13 @@ def test_sct_trim():
     trim_case.import_aero_data("./misc/TODatabase_body_3all.csv",
                                model='linear')
     climb_angle = 10.
-    load_factor = 2.
+    load_factor = 1.
     trim_case.trim(climb_angle=climb_angle, load_factor=load_factor)
-    load_calculated = np.cos(trim_case.climb_angle)/np.cos(trim_case.bank_angle)
+    load_calculated = np.cos(trim_case.elevation_angle)/np.cos(trim_case.bank_angle)
     load_assert = np.abs(load_factor - load_calculated) <= 1e-12
     elevation_angle = np.rad2deg(trim_case.elevation_angle)
     trim_aoa = np.rad2deg(trim_case.trim_state[0])
-    elev_assert = np.abs(elevation_angle - trim_aoa - climb_angle) <= 1e-12
+    elev_assert = elevation_angle - trim_aoa - climb_angle <= 1e-12
     assert load_assert*elev_assert
 
 

@@ -980,7 +980,7 @@ class TrimCase:
         aero_data[:, 7] *= self.lat_ref_len/(2.*self.V)
         return aero_data
 
-    def trim(self, climb_angle=0., load_factor=1., shss=False):
+    def trim(self, climb_angle=0., bank_angle=0., shss=False):
         """Trims the aircraft.
 
         With the appropriate aerodynamic database imported and aerodynamic
@@ -1022,21 +1022,18 @@ class TrimCase:
                                                 args=args)
         else:
             self.climb_angle = np.deg2rad(climb_angle)
-            self.load_factor = load_factor
-            self.bank_angle = self._calc_bank_angle(self.climb_angle,
-                                                    load_factor)
-            orientation_climb = [self.climb_angle, self.bank_angle]
-            args = (orientation_climb)
-            # self.trim_state = optimize.minimize(self._trim_sct, trim_params,
-            #                                     args=args).x
+            self.bank_angle = np.deg2rad(bank_angle)
             self.trim_iter = 1
-            self.trim_state = optimize.fsolve(self._trim_sct, trim_params,
-                                              args=args)
+            # self.trim_state = optimize.minimize(self._trim_sct, trim_params,
+            #                                     method='BFGS',
+            #                                     args=args,
+            #                                     options={'gtol':1e-12}).x
+            self.trim_state = optimize.fsolve(self._trim_sct, trim_params)
             print(np.cos(self.climb_angle)/np.cos(self.bank_angle))
             CL_trim = self.c_l([*self.trim_state[:-1], *self.rot_rates])
-            l_w_cond1 = CL_trim*np.cos(self.bank_angle)/(self.W*np.cos(self.climb_angle)/self.nondim_coeff)
-            l_w_cond2 = CL_trim*np.sin(self.bank_angle)/(self.W*np.sin(self.climb_angle)/self.nondim_coeff)
-            print(np.sqrt(l_w_cond1**2 + l_w_cond2**2))
+            CW = self.W/self.nondim_coeff
+            l_w_cond = CL_trim/CW
+            print(l_w_cond)
 
 
     def _trim_shss(self, trim_params, climb_angle, **kwargs):
@@ -1073,27 +1070,29 @@ class TrimCase:
         """
         pass
 
-    def _trim_sct(self, trim_params, orientation_climb):
+    def _trim_sct(self, trim_params):
         alpha, beta, d_a, d_e, d_r, tau = trim_params
         # Calculate body-fixed velocities
         vel_bf = self._vel_comp(alpha, beta)
 
         # Calculate elevation angle
-        elevation_angle = self._calc_elevation_angle(alpha, beta,
-                                                     orientation_climb)
+        elevation_angle = self._calc_elevation_angle(vel_bf,
+                                                     [self.climb_angle,
+                                                      self.bank_angle])
 
         # Calculate rotation rates
         # Use aero model to find aero angles, throttle setting, and deflections
         orientation = [elevation_angle, self.bank_angle]
         total_f, total_m = self._6dof_fm(trim_params[:-1], tau,
                                                     orientation, vel_bf)
-        total_fm = [abs(fm) for fm in total_f + total_m]
+        total_fm = [fm for fm in total_f + total_m]
         output = [*vel_bf, np.rad2deg(self.bank_angle),
-                  np.rad2deg(elevation_angle), *self.rot_rates,
+                  np.rad2deg(elevation_angle), *np.rad2deg(self.rot_rates),
                   *np.rad2deg(trim_params[:-1]), trim_params[-1]]
-        output_names = ['u', 'v', 'w', '\u03C6', '\u03B8', 'p', 'q', 'r',
-                        '\u03B1', '\u03B2', '\u03B4_a', '\u03B4_e',
-                        '\u03B4_r', '\u03C4']
+        output_names = ['u [ft/s]', 'v [ft/s]', 'w [ft/s]', '\u03C6 [deg]',
+                        '\u03B8 [deg]', 'p [deg/s]', 'q [deg/s]', 'r [deg/s]',
+                        '\u03B1 [deg]', '\u03B2 [deg]', '\u03B4_a [deg]',
+                        '\u03B4_e [deg]', '\u03B4_r [deg]', '\u03C4 [lbs]']
         print("Iteration:" + str(self.trim_iter) + "\n")
         for name, value in zip(output_names, output):
             print(f'{name:10} ==> {value:3.8}')
@@ -1102,7 +1101,7 @@ class TrimCase:
         print(total_fm)
         self.elevation_angle = elevation_angle
         return total_fm
-        # return np.linalg.norm(total_forces + total_moments)
+        # return np.linalg.norm(total_fm)
 
 
 
@@ -1122,6 +1121,7 @@ class TrimCase:
                                             euler_transform, u, w)
         params = list(list(params[:]) + rot_rates)
         aero_forces, aero_moments = self._dimensionalize_aero_fm(params, f_xt)
+        print(aero_forces[1])
         weight_forces = self._6dof_weight_forces(euler_transform)
         rot_forces = self._6dof_coriolis_forces(rot_rates, vel_bf)
         total_forces = [x + y + z for x, y, z in zip(aero_forces,
@@ -1191,51 +1191,43 @@ class TrimCase:
         bank_angle = np.arccos(c_climb/load_factor)
         return bank_angle
 
-    def _calc_elevation_angle(self, alpha, beta, orientation):
+    def _calc_elevation_angle(self, vel_bf, orientation):
         climb_angle, bank_angle = orientation
         s_climb = np.sin(climb_angle)
         s_bank = np.sin(bank_angle)
         c_bank = np.cos(bank_angle)
-        s_alpha = np.sin(alpha)
-        c_alpha = np.cos(alpha)
-        s_beta = np.sin(beta)
-        c_beta = np.cos(beta)
-        A = (c_alpha**2*c_beta**2 + s_bank**2*s_beta**2 +
-             2.*s_bank*c_bank*s_alpha*s_beta*c_beta +
-             c_bank**2*s_alpha**2*c_beta**2)
-        B = -2.*s_climb*c_alpha*c_beta
-        C = (s_climb**2 - s_bank**2*s_beta**2 -
-             2.*s_bank*c_bank*s_alpha*s_beta*c_beta -
-             c_bank**2*s_alpha**2*c_beta**2)
-        elevation_angle_plus = np.arcsin((-B + np.sqrt(B**2 - 4.*A*C))/(2.*A))
-        elevation_angle_minus = np.arcsin((-B - np.sqrt(B**2 - 4.*A*C))/(2.*A))
+        u, v, w = vel_bf
+        A = (u**2/self.V**2 + s_bank**2*v**2/self.V**2 +
+             2.*s_bank*c_bank*v*w/self.V**2 + c_bank**2*w**2/self.V**2)
+        B = -s_climb*u/self.V
+        C = (s_climb**2 - s_bank**2*v**2/self.V**2 -
+             2.*s_bank*c_bank*v*w/self.V**2 - c_bank**2*w**2/self.V**2)
+        elevation_angle_plus = np.arcsin((-B + np.sqrt(B**2 - A*C))/(A))
+        elevation_angle_minus = np.arcsin((-B - np.sqrt(B**2 - A*C))/(A))
         orientation_plus = [elevation_angle_plus, bank_angle]
         orientation_minus = [elevation_angle_minus, bank_angle]
         if np.allclose(-s_climb,
-                       self._test_elevation(alpha, beta, orientation_plus),
+                       self._test_elevation(vel_bf, orientation_plus),
                        atol=1e-12):
             elevation_angle = elevation_angle_plus
         else:
             assert np.allclose(-s_climb,
-                               self._test_elevation(alpha, beta,
+                               self._test_elevation(vel_bf,
                                                     orientation_minus),
                                atol=1e-12)
             elevation_angle = elevation_angle_minus
         return elevation_angle
 
-    def _test_elevation(self, alpha, beta, orientation):
+    def _test_elevation(self, vel_bf, orientation):
         elevation_angle, bank_angle = orientation
         s_elev = np.sin(elevation_angle)
         c_elev = np.cos(elevation_angle)
         s_bank = np.sin(bank_angle)
         c_bank = np.cos(bank_angle)
-        s_alpha = np.sin(alpha)
-        c_alpha = np.cos(alpha)
-        s_beta = np.sin(beta)
-        c_beta = np.cos(beta)
-        return (-s_elev*c_alpha*c_beta + s_bank*c_elev*s_beta +
-                c_bank*c_elev*s_alpha*c_beta)
+        u, v, w = vel_bf
+        return (-s_elev*u/self.V + s_bank*c_elev*v/self.V +
+                c_bank*c_elev*w/self.V)
 
-trim_case = TrimCase(222.5211, 0.0023084)
+trim_case = TrimCase(222., 0.0023084)
 trim_case.import_aero_data("./misc/TODatabase_body_3all.csv", model='linear')
-trim_case.trim(climb_angle=0., load_factor=1.0)
+trim_case.trim(climb_angle=0., bank_angle=0.0)
