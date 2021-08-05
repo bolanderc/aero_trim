@@ -425,11 +425,54 @@ def test_calc_bank_angle():
     coordinated turn given the load factor and elevation angle.
     """
     trim_case = aero_trim.TrimCase(V_FREE, RHO_FREE)
-    elevation = np.deg2rad(10.)
-    n = 2.
-    phi = np.rad2deg(trim_case._calc_bank_angle(elevation, n))
+    trim_case.elevation_angle = np.deg2rad(10.)
+    alpha = 0.
+    beta = 0.
+    s_alpha = np.sin(alpha)
+    c_alpha = np.cos(alpha)
+    s_beta = np.sin(beta)
+    c_beta = np.cos(beta)
+    d_a = 0.
+    d_e = 0.
+    d_r = 0.
+    p = 0.
+    q = 0.
+    r = 0.
+    vel_bf = [V_FREE, 0., 0.]
+    CS = trim_case.c_s([alpha, beta, d_a, d_e, d_r, p, q, r])
+    CD = trim_case.c_d([alpha, beta, d_a, d_e, d_r, p, q, r])
+    load_a = 2.
+    phi = np.rad2deg(trim_case._calc_bank_angle(alpha, beta, vel_bf, CS, CD, load_a))
     phi_analytical = 60.50129576889634
-    assert np.abs(phi - phi_analytical) <= 1e-12
+    phi_test = np.abs(phi - phi_analytical) <= 1e-12
+
+    const = trim_case.nondim_coeff/trim_case.W*(CS*s_alpha*s_beta +
+                                                CD*s_alpha*c_beta)
+    n_a = trim_case._test_bank(const, np.deg2rad(phi), trim_case.elevation_angle, vel_bf)/c_alpha
+    load_test = np.abs(load_a - n_a) <= 1e-12
+
+    alpha = np.deg2rad(20.)
+    beta = np.deg2rad(20.)
+    s_alpha = np.sin(alpha)
+    c_alpha = np.cos(alpha)
+    s_beta = np.sin(beta)
+    c_beta = np.cos(beta)
+    d_a = np.deg2rad(5.)
+    d_e = np.deg2rad(-15.)
+    d_r = np.deg2rad(-3.)
+    p = 0.
+    q = 0.
+    r = 0.
+    vel_bf = trim_case._vel_comp(alpha, beta)
+    CS = trim_case.c_s([alpha, beta, d_a, d_e, d_r, p, q, r])
+    CD = trim_case.c_d([alpha, beta, d_a, d_e, d_r, p, q, r])
+    load_a = 2.
+    phi = trim_case._calc_bank_angle(alpha, beta, vel_bf, CS, CD, load_a)
+    const = trim_case.nondim_coeff/trim_case.W*(CS*s_alpha*s_beta +
+                                                CD*s_alpha*c_beta)
+    n_a = trim_case._test_bank(const, phi, trim_case.elevation_angle, vel_bf)/c_alpha
+    comp_load_test = np.abs(load_a - n_a) <= 1e-12
+    assert phi_test*load_test*comp_load_test
 
 
 def test_sct_trim():
@@ -461,4 +504,5 @@ DIMENSION_LIMS = [(-15., 15.),
 NUM_DIMENSIONS = 8
 NUM_PTS_PER_DIMENSION = 5
 SORT_HEADER_TITLES = ["AOA", "Beta", "d_e", "d_a", "d_r", "p", "q", "r"]
+
 
