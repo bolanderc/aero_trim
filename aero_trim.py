@@ -280,6 +280,7 @@ class TrimCase:
         self.Cn_rbar = -0.3041
         self.Cn_da = -0.0432
         self.Cn_dr = -0.1071
+        self.model = "linear"
         self._w2b_linear_coeffs_conversion()
 
 
@@ -405,7 +406,7 @@ class TrimCase:
         >>> trim_case.import_aero_data(file_name, model='linear')
 
         """
-        model = kwargs.get("model", "database")
+        model = kwargs.get("model", "linear")
         if model == "database":
             save_numpy = kwargs.get("save_numpy", False)
             save_sorted = kwargs.get("save_sorted", False)
@@ -417,12 +418,21 @@ class TrimCase:
             except ValueError:
                 raise TypeError('required arguments for database import not '\
                                 'specified')
-        if model == "linear":
+        elif model == "linear":
             self.model = "linear"
-            aero_data = np.loadtxt(file_name, delimiter=",", skiprows=1)
+            aero_data = np.loadtxt(file_name, delimiter=",", skiprows=1, usecols=range(14))
             converted_aero_data = self._data_conversion(aero_data)
             self._linear_fits(converted_aero_data)
             self._w2b_linear_coeffs_conversion()
+
+        elif model == "bire":
+            self.model = "bire"
+            d_B = kwargs.get("d_B", np.linspace(-90, 90, 11))
+            aero_data = np.loadtxt(file_name, delimiter=",", skiprows=1)
+            converted_aero_data = self._data_conversion(aero_data)
+            self._bire_linear_fits(converted_aero_data, d_B)
+            self._w2b_linear_coeffs_conversion()
+            self._bire_fits_dB(d_B)
 
         elif model == "morelli":
             self.model = "morelli"
@@ -773,12 +783,12 @@ class TrimCase:
         # Re-organize data
         N = len(aero_data[:, 0])
         A = np.zeros((N, 9))
-        b_lift = aero_data[:, -4]
-        b_side = aero_data[:, -5]
-        b_drag = aero_data[:, -6]
-        b_roll = aero_data[:, -3]
-        b_pitch = aero_data[:, -2]
-        b_yaw = aero_data[:, -1]
+        b_lift = aero_data[:, 10]
+        b_side = aero_data[:, 9]
+        b_drag = aero_data[:, 8]
+        b_roll = aero_data[:, 11]
+        b_pitch = aero_data[:, 12]
+        b_yaw = aero_data[:, 13]
         alpha = np.deg2rad(aero_data[:, 0])
         beta = np.deg2rad(aero_data[:, 1])
         d_e = np.deg2rad(aero_data[:, 2])
@@ -878,6 +888,568 @@ class TrimCase:
         self.CD_qbar = self.coeffs_drag[5]
         self.CD_de = self.coeffs_drag[8]
 
+    def _bire_linear_fits(self, aero_data, d_B):
+        """Performs a least-squares fit to generate coefficients for a linear
+        aerodynamic model for the BIRE configuration.
+
+        Takes an aerodynamic database and performs a least-squares fit to
+        construct a linear aerodynamic model. This model is of the form given
+        in the Notes section.
+
+        Parameters
+        ----------
+        aero_data : array_like
+            Aerodynamic data with the data arranged so that the columns are
+            in the order: alpha, beta, d_e, d_a, d_B, pbar, qbar, rbar, C_D,
+            C_S, C_L, C_l, C_m, C_n.
+
+        Attributes
+        ----------
+        coeffs_lift : array_like
+            Linear least-squares coefficients for the lift coefficient.
+
+        CL0 : float
+            Least-squares coefficient for the lift coefficient at zero
+            aerodynamic angles, control surface deflections, and rotation
+            rates.
+
+        CL_alpha : float
+            Least-squares coefficient for the lift slope.
+
+        CL_qbar : float
+            Least-squares coefficient for the change in lift coefficient with
+            respect to the dimensionless pitch rate.
+
+        CL_de : float
+            Least-squares coefficient for the change in lift coefficient with
+            respect to elevator deflection.
+
+        coeffs_pitch : array_like
+            Linear least-squares coefficients for the pitching moment
+            coefficient.
+
+        Cm0 : float
+            Least-squares coefficient for the pitching moment coefficient at
+            zero aerodynamic angles, control surface deflections, and
+            rotation rates.
+
+        Cm_alpha : float
+            Least-squares coefficient for the pitching moment slope.
+
+        Cm_qbar : float
+            Least-squares coefficient for the change in pitching moment
+            coefficient with respect to the dimensionless pitch rate.
+
+        Cm_de : float
+            Least-squares coefficient for the change in pitching moment
+            coefficient with respect to elevator deflection.
+
+        coeffs_side : array_like
+            Linear least-squares coefficients for the side force coefficient.
+
+        CS_beta : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to sideslip angle.
+
+        CS_pbar : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to the dimensionless roll rate.
+
+        CS_rbar : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to the dimensionless yaw rate.
+
+        CS_da : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to aileron deflection.
+
+        CS_dr : float
+            Least-squares coefficient for the change in side force coefficient
+            with respect to rudder deflection.
+
+        coeffs_roll : array_like
+            Linear least-squares coefficients for the rolling moment
+            coefficient.
+
+        Cell_beta : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to sideslip angle.
+
+        Cell_pbar : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to the dimensionless roll rate.
+
+        Cell_rbar : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to the dimensionless yaw rate.
+
+        Cell_da : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to aileron deflection.
+
+        Cell_dr : float
+            Least-squares coefficient for the change in rolling moment
+            coefficient with respect to rudder deflection.
+
+        coeffs_yaw : array_like
+            Linear least-squares coefficients for the yawing moment
+            coefficient.
+
+        Cn_beta : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to sideslip angle.
+
+        Cn_pbar : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to the dimensionless roll rate.
+
+        Cn_rbar : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to the dimensionless yaw rate.
+
+        Cn_da : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to aileron deflection.
+
+        Cn_dr : float
+            Least-squares coefficient for the change in yawing moment
+            coefficient with respect to rudder deflection.
+
+        coeffs_drag : array_like
+            Linear least-squares coefficients for the drag coefficient.
+
+        CD0 : float
+            Least-squares coefficient for the drag coefficient at zero
+            aerodynamic angles, control surface deflections, and rotation
+            rates.
+
+        CD1 : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the lift coefficient.
+
+        CD2 : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the lift coefficient squared.
+
+        CD3 : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the side force coefficient squared.
+
+        CD_qbar : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to the dimensionless pitch rate.
+
+        CD_de : float
+            Least-squares coefficient for the change in drag coefficient with
+            respect to elevator deflection.
+
+        See Also
+        --------
+        numpy.linalg.lstsq : Return the least-squares solution to a linear
+                             matrix equation.
+
+        Notes
+        -----
+        The linear aerodynamic model is of the form:
+
+            CL = C_L0 + C_L,alpha*alpha + C_L,qbar*qbar + C_L,delta_e*delta_e
+
+            CS = C_S,beta*beta + C_S,pbar*pbar + C_S,rbar*rbar +
+                 C_S,delta_a*delta_a + C_S,delta_r*delta_r
+
+            CD = C_D0 + C_D1*CL + C_D2*CL**2 + C_D3*CS**2 + C_D,qbar*qbar +
+                 C_D,delta_e*delta_e
+
+            Cl = C_l,beta*beta + C_l,pbar*pbar + C_l,rbar*rbar +
+                 C_l,delta_a*delta_a + C_l,delta_r*delta_r
+
+            Cm = C_m0 + C_m,alpha*alpha + C_m,qbar*qbar + C_m,delta_e*delta_e
+
+            Cn = C_n,beta*beta + C_n,pbar*pbar + C_n,rbar*rbar +
+                 C_n,delta_a*delta_a + C_n,delta_r*delta_r
+
+        """
+        n_dB = len(d_B)
+        self.coeffs_lift = np.zeros((n_dB, 8))
+        self.CL0 = np.zeros(n_dB)
+        self.CL_alpha = np.zeros(n_dB)
+        self.CL_beta = np.zeros(n_dB)
+        self.CL_pbar = np.zeros(n_dB)
+        self.CL_qbar = np.zeros(n_dB)
+        self.CL_rbar = np.zeros(n_dB)
+        self.CL_da = np.zeros(n_dB)
+        self.CL_de = np.zeros(n_dB)
+
+        self.coeffs_side = np.zeros((n_dB, 8))
+        self.CS0 = np.zeros(n_dB)
+        self.CS_alpha = np.zeros(n_dB)
+        self.CS_beta = np.zeros(n_dB)
+        self.CS_pbar = np.zeros(n_dB)
+        self.CS_qbar = np.zeros(n_dB)
+        self.CS_rbar = np.zeros(n_dB)
+        self.CS_da = np.zeros(n_dB)
+        self.CS_de = np.zeros(n_dB)
+
+        self.coeffs_drag = np.zeros((n_dB, 9))
+        self.CD0 = np.zeros(n_dB)
+        self.CD1 = np.zeros(n_dB)
+        self.CD2 = np.zeros(n_dB)
+        self.CD3 = np.zeros(n_dB)
+        self.CD_pbar = np.zeros(n_dB)
+        self.CD_qbar = np.zeros(n_dB)
+        self.CD_rbar = np.zeros(n_dB)
+        self.CD_da = np.zeros(n_dB)
+        self.CD_de = np.zeros(n_dB)
+
+        self.coeffs_roll = np.zeros((n_dB, 8))
+        self.Cell0 = np.zeros(n_dB)
+        self.Cell_alpha = np.zeros(n_dB)
+        self.Cell_beta = np.zeros(n_dB)
+        self.Cell_pbar = np.zeros(n_dB)
+        self.Cell_qbar = np.zeros(n_dB)
+        self.Cell_rbar = np.zeros(n_dB)
+        self.Cell_da = np.zeros(n_dB)
+        self.Cell_de = np.zeros(n_dB)
+
+        self.coeffs_pitch = np.zeros((n_dB, 8))
+        self.Cm0 = np.zeros(n_dB)
+        self.Cm_alpha = np.zeros(n_dB)
+        self.Cm_beta = np.zeros(n_dB)
+        self.Cm_pbar = np.zeros(n_dB)
+        self.Cm_qbar = np.zeros(n_dB)
+        self.Cm_rbar = np.zeros(n_dB)
+        self.Cm_da = np.zeros(n_dB)
+        self.Cm_de = np.zeros(n_dB)
+
+        self.coeffs_yaw = np.zeros((n_dB, 8))
+        self.Cn0 = np.zeros(n_dB)
+        self.Cn_alpha = np.zeros(n_dB)
+        self.Cn_beta = np.zeros(n_dB)
+        self.Cn_pbar = np.zeros(n_dB)
+        self.Cn_qbar = np.zeros(n_dB)
+        self.Cn_rbar = np.zeros(n_dB)
+        self.Cn_da = np.zeros(n_dB)
+        self.Cn_de = np.zeros(n_dB)
+
+        for i in range(n_dB):
+            dBi = d_B[i]
+            mask = aero_data[:, 4] == dBi
+            aero_data_dBi = np.copy(aero_data[mask, :])
+
+            # Re-organize data
+            N = len(aero_data_dBi[:, 0])
+            A = np.zeros((N, 8))
+            b_lift = aero_data_dBi[:, 10]
+            b_side = aero_data_dBi[:, 9]
+            b_drag = aero_data_dBi[:, 8]
+            b_roll = aero_data_dBi[:, 11]
+            b_pitch = aero_data_dBi[:, 12]
+            b_yaw = aero_data_dBi[:, 13]
+            alpha = np.deg2rad(aero_data_dBi[:, 0])
+            beta = np.deg2rad(aero_data_dBi[:, 1])
+            d_e = np.deg2rad(aero_data_dBi[:, 2])
+            d_a = np.deg2rad(aero_data_dBi[:, 3])
+            pbar = aero_data_dBi[:, 5]
+            qbar = aero_data_dBi[:, 6]
+            rbar = aero_data_dBi[:, 7]
+
+            # Construct A matrix for full linear least-squares problem.
+            A[:, 0] = 1.
+            A[:, 1] = alpha
+            A[:, 2] = beta
+            A[:, 3] = pbar
+            A[:, 4] = qbar
+            A[:, 5] = rbar
+            A[:, 6] = d_a
+            A[:, 7] = d_e
+
+            # Solve for linear least-squares lift coefficients.
+            lst_sq_res = np.linalg.lstsq(A, b_lift, rcond=None)
+            self.coeffs_lift[i, :] = lst_sq_res[0]
+
+            # Save relevant coefficients for chosen linear aerodynamic model.
+            self.CL0[i] = self.coeffs_lift[i, 0]
+            self.CL_alpha[i] = self.coeffs_lift[i, 1]
+            self.CL_beta[i] = self.coeffs_lift[i, 2]
+            self.CL_pbar[i] = self.coeffs_lift[i, 3]
+            self.CL_qbar[i] = self.coeffs_lift[i, 4]
+            self.CL_rbar[i] = self.coeffs_lift[i, 5]
+            self.CL_da[i] = self.coeffs_lift[i, 6]
+            self.CL_de[i] = self.coeffs_lift[i, 7]
+
+            # Solve for linear least-squares pitch coefficients.
+            lst_sq_res = np.linalg.lstsq(A, b_pitch, rcond=None)
+            self.coeffs_pitch[i, :] = lst_sq_res[0]
+
+            # Save relevant coefficients for chosen linear aerodynamic model.
+            self.Cm0[i] = self.coeffs_pitch[i, 0]
+            self.Cm_alpha[i] = self.coeffs_pitch[i, 1]
+            self.Cm_beta[i] = self.coeffs_pitch[i, 2]
+            self.Cm_pbar[i] = self.coeffs_pitch[i, 3]
+            self.Cm_qbar[i] = self.coeffs_pitch[i, 4]
+            self.Cm_rbar[i] = self.coeffs_pitch[i, 5]
+            self.Cm_da[i] = self.coeffs_pitch[i, 6]
+            self.Cm_de[i] = self.coeffs_pitch[i, 7]
+
+            # Solve for linear least-squares side force coefficients.
+            lst_sq_res = np.linalg.lstsq(A, b_side, rcond=None)
+            self.coeffs_side[i, :] = lst_sq_res[0]
+
+            # Save relevant coefficients for chosen linear aerodynamic model.
+            self.CS0[i] = self.coeffs_side[i, 0]
+            self.CS_alpha[i] = self.coeffs_side[i, 1]
+            self.CS_beta[i] = self.coeffs_side[i, 2]
+            self.CS_pbar[i] = self.coeffs_side[i, 3]
+            self.CS_qbar[i] = self.coeffs_side[i, 4]
+            self.CS_rbar[i] = self.coeffs_side[i, 5]
+            self.CS_da[i] = self.coeffs_side[i, 6]
+            self.CS_de[i] = self.coeffs_side[i, 7]
+
+            # Solve for linear least-squares roll coefficients.
+            lst_sq_res = np.linalg.lstsq(A, b_roll, rcond=None)
+            self.coeffs_roll[i, :] = lst_sq_res[0]
+
+            # Save relevant coefficients for chosen linear aerodynamic model.
+            self.Cell0[i] = self.coeffs_roll[i, 0]
+            self.Cell_alpha[i] = self.coeffs_roll[i, 1]
+            self.Cell_beta[i] = self.coeffs_roll[i, 2]
+            self.Cell_pbar[i] = self.coeffs_roll[i, 3]
+            self.Cell_qbar[i] = self.coeffs_roll[i, 4]
+            self.Cell_rbar[i] = self.coeffs_roll[i, 5]
+            self.Cell_da[i] = self.coeffs_roll[i, 6]
+            self.Cell_de[i] = self.coeffs_roll[i, 7]
+
+            # Solve for linear least-squares yaw coefficients.
+            lst_sq_res = np.linalg.lstsq(A, b_yaw, rcond=None)
+            self.coeffs_yaw[i, :] = lst_sq_res[0]
+
+            # Save relevant coefficients for chosen linear aerodynamic model.
+            self.Cn0[i] = self.coeffs_yaw[i, 0]
+            self.Cn_alpha[i] = self.coeffs_yaw[i, 1]
+            self.Cn_beta[i] = self.coeffs_yaw[i, 2]
+            self.Cn_pbar[i] = self.coeffs_yaw[i, 3]
+            self.Cn_qbar[i] = self.coeffs_yaw[i, 4]
+            self.Cn_rbar[i] = self.coeffs_yaw[i, 5]
+            self.Cn_da[i] = self.coeffs_yaw[i, 6]
+            self.Cn_de[i] = self.coeffs_yaw[i, 7]
+
+            # Construct A matrix for linear least-squares problem specific to drag
+            # model.
+            A = np.zeros((N, 9))
+            A[:, 0] = 1.
+            A[:, 1] = b_lift
+            A[:, 2] = np.square(b_lift)
+            A[:, 3] = np.square(b_side)
+            A[:, 4] = pbar
+            A[:, 5] = qbar
+            A[:, 6] = rbar
+            A[:, 7] = d_a
+            A[:, 8] = d_e
+
+            # Solve for linear least-squares drag coefficients.
+            lst_sq_res = np.linalg.lstsq(A, b_drag, rcond=None)
+            self.coeffs_drag[i, :] = lst_sq_res[0]
+
+            # Save relevant coefficients for chosen linear aerodynamic model.
+            self.CD0[i] = self.coeffs_drag[i, 0]
+            self.CD1[i] = self.coeffs_drag[i, 1]
+            self.CD2[i] = self.coeffs_drag[i, 2]
+            self.CD3[i] = self.coeffs_drag[i, 3]
+            self.CD_pbar[i] = self.coeffs_drag[i, 4]
+            self.CD_qbar[i] = self.coeffs_drag[i, 5]
+            self.CD_rbar[i] = self.coeffs_drag[i, 6]
+            self.CD_da[i] = self.coeffs_drag[i, 7]
+            self.CD_de[i] = self.coeffs_drag[i, 8]
+
+    def _bire_fits_dB(self, d_B):
+        d_B = np.deg2rad(d_B)
+        # LIFT FITS
+        self._bire_lift_fits_dB(d_B)
+        # DRAG FITS
+        self._bire_drag_fits_dB(d_B)
+        # SIDE FITS
+        self._bire_side_fits_dB(d_B)
+        # ROLL FITS
+        self._bire_roll_fits_dB(d_B)
+        # PITCH FITS
+        self._bire_pitch_fits_dB(d_B)
+        # YAW FITS
+        self._bire_yaw_fits_dB(d_B)
+
+
+    def _bire_lift_fits_dB(self, d_B):
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CL0
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.01, 0.04, -0.66, 0.087])[0]
+        self.CL0_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CL_alpha
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.CLalpha_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CL_beta
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.CLbeta_dB = self._generate_sine_function(A, w, phi, z)
+        self.CLpbar_dB = self._generate_poly_function([np.mean(self.CL_pbar)])
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CL_qbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.001, 1.42, 3.69])[0]
+        self.CLqbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CL_rbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.CLrbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CL_da
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.CLda_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CL_de
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.7, 0.005, 1.42, 0.4])[0]
+        self.CLde_dB = self._generate_sine_function(A, w, phi, z)
+
+    def _bire_drag_fits_dB(self, d_B):
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CD0
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.01, 0.3, -0.66, 0.03])[0]
+        self.CD0_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: (x[0]*np.power(d_B, 3) + x[1]*np.power(d_B, 2) +
+                              x[2]*np.power(d_B, 1) + x[3] - self.CD1)
+        a = optimize.leastsq(sine_fit, [0.01, 0.04, -0.66, 0.087])[0]
+        self.CD1_dB = self._generate_poly_function(a)
+        sine_fit = lambda x: (x[0]*np.power(d_B, 4) + x[1]*np.power(d_B, 3) +
+                              x[2]*np.power(d_B, 2) + x[3]*np.power(d_B, 1) +
+                              x[4] - self.CD2)
+        a = optimize.leastsq(sine_fit, [0.01, 0.04, -0.66, 0.087, 0.1])[0]
+        self.CD2_dB = self._generate_poly_function(a)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CD3
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.01, 0.1, -0.66, 0.087])[0]
+        self.CD3_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CD_pbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.03, 0.02, -0.66, 0.087])[0]
+        self.CDpbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CD_qbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.03, 0.05, -0.66, 0.087])[0]
+        self.CDqbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CD_rbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.03, 0.02, -0.66, 0.087])[0]
+        self.CDrbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CD_da
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.06, 0.01, -0.66, 0.087])[0]
+        self.CDda_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CD_de
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.03, 0.02, -0.66, 0.087])[0]
+        self.CDde_dB = self._generate_sine_function(A, w, phi, z)
+
+    def _bire_side_fits_dB(self, d_B):
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS0
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.01, 0.04, -0.66, 0.087])[0]
+        self.CS0_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS_alpha
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.CSalpha_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS_beta
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.01, 1.42, 3.69])[0]
+        self.CSbeta_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS_pbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.CSpbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS_qbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.05, 1.42, 3.69])[0]
+        self.CSqbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS_rbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.5, 0.08, 1.42, 0.25])[0]
+        self.CSrbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS_da
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.005, 1.42, 3.69])[0]
+        self.CSda_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.CS_de
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.CSde_dB = self._generate_sine_function(A, w, phi, z)
+
+    def _bire_roll_fits_dB(self, d_B):
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cell0
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.01, 4., -0.66, 0.])[0]
+        self.Cell0_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cell_alpha
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.1, 1.42, 3.69])[0]
+        self.Cellalpha_dB = self._generate_sine_function(A, w, phi, z)
+        self.Cellbeta_dB = self._generate_poly_function([np.mean(self.Cell_beta)])
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cell_pbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.Cellpbar_dB = self._generate_sine_function(A, w, phi, z)
+        self.Cellqbar_dB = self._generate_poly_function([np.mean(self.Cell_qbar)])
+        self.Cellrbar_dB = self._generate_poly_function([np.mean(self.Cell_rbar)])
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cell_da
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.Cellda_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: (x[0]*np.power(d_B, 3) + x[1]*np.power(d_B, 2) +
+                              x[2]*np.power(d_B, 1) + x[3] - self.Cell_de)
+        a = optimize.leastsq(sine_fit, [0.01, 0.04, -0.66, 0.087])[0]
+        self.Cellde_dB = self._generate_poly_function(a)
+
+    def _bire_pitch_fits_dB(self, d_B):
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm0
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.02, 0.1, -0.66, 0.02])[0]
+        self.Cm0_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm_alpha
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.05, 0.0, 0.02])[0]
+        self.Cmalpha_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm_beta
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.05, 1.42, 0.])[0]
+        self.Cmbeta_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm_pbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.Cmpbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm_qbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [-3., 0.04, 1.42, 3.69])[0]
+        self.Cmqbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm_rbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.5, 0.08, 1.42, 0.25])[0]
+        self.Cmrbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm_da
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.Cmda_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cm_de
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.01, 1.42, -0.4])[0]
+        self.Cmde_dB = self._generate_sine_function(A, w, phi, z)
+
+    def _bire_yaw_fits_dB(self, d_B):
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cn0
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.001, 0.5, -0.66, 0.0])[0]
+        self.Cn0_dB = self._generate_poly_function([np.mean(self.Cn0)])
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cn_alpha
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.03, 1.42, 3.69])[0]
+        self.Cnalpha_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cn_beta
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.03, 1.42, 3.69])[0]
+        self.Cnbeta_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: (x[0]*np.power(d_B, 3) + x[1]*np.power(d_B, 2) +
+                              x[2]*np.power(d_B, 1) + x[3] - self.Cn_pbar)
+        a = optimize.leastsq(sine_fit, [0.01, 0.04, -0.66, 0.087])[0]
+        self.Cnpbar_dB = self._generate_poly_function(a)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cn_qbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.5, 0.02, 1.42, 3.69])[0]
+        self.Cnqbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cn_rbar
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.5, 0.08, 1.42, 0.25])[0]
+        self.Cnrbar_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: x[0]*np.sin(x[1]*d_B+x[2]) + x[3] - self.Cn_da
+        A, w, phi, z = optimize.leastsq(sine_fit, [0.15, 0.04, 1.42, 3.69])[0]
+        self.Cnda_dB = self._generate_sine_function(A, w, phi, z)
+        sine_fit = lambda x: (x[0]*np.power(d_B, 3) + x[1]*np.power(d_B, 2) +
+                              x[2]*np.power(d_B, 1) + x[3] - self.Cn_de)
+        a = optimize.leastsq(sine_fit, [0.01, 0.04, -0.66, 0.087])[0]
+        self.Cnde_dB = self._generate_poly_function(a)
+
+
+
+    def _generate_sine_function(self, A, w, phi, z):
+        def dummy(x):
+            return A*np.sin(w*x + phi) + z
+        return dummy
+
+    def _generate_poly_function(self, a):
+        def dummy(x):
+            summ = a[-1]
+            for i in range(len(a) - 1):
+                summ += a[i]*np.power(x, len(a) - 1 - i)
+            return summ
+        return dummy
+
+
     def _w2b_linear_coeffs_conversion(self):
         """Converts linear least-squares coefficients to the body-fixed frame.
 
@@ -934,42 +1506,101 @@ class TrimCase:
 
         """
         # Note that the inputs `x` are all in radians.
-        self.c_l = lambda x: (self.CL0 +
-                              self.CL_alpha*x[0] +
-                              self.CL_qbar*x[6] +
-                              self.CL_de*x[3])
-        self.c_s = lambda x: (self.CS_beta*x[1] +
-                              self.CS_pbar*x[5] +
-                              self.CS_rbar*x[7] +
-                              self.CS_da*x[2] +
-                              self.CS_dr*x[4])
-        self.c_d = lambda x: (self.CD0 + self.CD1*self.c_l(x) +
-                              self.CD2*self.c_l(x)**2 +
-                              self.CD3*self.c_s(x)**2 +
-                              self.CD_qbar*x[6] +
-                              self.CD_de*x[3])
-        self.c_x = lambda x: [-(self.c_d(x)*np.cos(x[0])*np.cos(x[1]) +
-                                self.c_s(x)*np.cos(x[0])*np.sin(x[1]) -
-                                self.c_l(x)*np.sin(x[0]))]
-        self.c_y = lambda x: [(self.c_s(x)*np.cos(x[1]) -
-                               self.c_d(x)*np.sin(x[1]))]
-        self.c_z = lambda x: [-(self.c_d(x)*np.sin(x[0])*np.cos(x[1]) +
-                                self.c_s(x)*np.sin(x[0])*np.sin(x[1]) +
-                                self.c_l(x)*np.cos(x[0]))]
-        self.c_ell = lambda x: [(self.Cell_beta*x[1] +
-                                 self.Cell_pbar*x[5] +
-                                 self.Cell_rbar*x[7] +
-                                 self.Cell_da*x[2] +
-                                 self.Cell_dr*x[4])]
-        self.c_m = lambda x: [(self.Cm0 +
-                               self.Cm_alpha*x[0] +
-                               self.Cm_qbar*x[6] +
-                               self.Cm_de*x[3])]
-        self.c_n = lambda x: [(self.Cn_beta*x[1] +
-                               self.Cn_pbar*x[5] +
-                               self.Cn_rbar*x[7] +
-                               self.Cn_da*x[2] +
-                               self.Cn_dr*x[4])]
+        if self.model == "bire":
+            self.c_l = lambda x: (self.CL0_dB(x[4]) +
+                                  self.CLalpha_dB(x[4])*x[0] +
+                                  self.CLbeta_dB(x[4])*x[1] +
+                                  self.CLpbar_dB(x[4])*x[5] +
+                                  self.CLqbar_dB(x[4])*x[6] +
+                                  self.CLrbar_dB(x[4])*x[7] +
+                                  self.CLda_dB(x[4])*x[2] +
+                                  self.CLde_dB(x[4])*x[3])
+            self.c_s = lambda x: (self.CS0_dB(x[4]) +
+                                  self.CSalpha_dB(x[4])*x[0] +
+                                  self.CSbeta_dB(x[4])*x[1] +
+                                  self.CSpbar_dB(x[4])*x[5] +
+                                  self.CSqbar_dB(x[4])*x[6] +
+                                  self.CSrbar_dB(x[4])*x[7] +
+                                  self.CSda_dB(x[4])*x[2] +
+                                  self.CSde_dB(x[4])*x[3])
+            self.c_d = lambda x: (self.CD0_dB(x[4]) +
+                                  self.CD1_dB(x[4])*self.c_l(x) +
+                                  self.CD2_dB(x[4])*self.c_l(x)**2 +
+                                  self.CD3_dB(x[4])*self.c_s(x)**2 +
+                                  self.CDpbar_dB(x[4])*x[5] +
+                                  self.CDqbar_dB(x[4])*x[6] +
+                                  self.CDrbar_dB(x[4])*x[7] +
+                                  self.CDda_dB(x[4])*x[2] +
+                                  self.CDde_dB(x[4])*x[3])
+            self.c_x = lambda x: [-(self.c_d(x)*np.cos(x[0])*np.cos(x[1]) +
+                                    self.c_s(x)*np.cos(x[0])*np.sin(x[1]) -
+                                    self.c_l(x)*np.sin(x[0]))]
+            self.c_y = lambda x: [(self.c_s(x)*np.cos(x[1]) -
+                                   self.c_d(x)*np.sin(x[1]))]
+            self.c_z = lambda x: [-(self.c_d(x)*np.sin(x[0])*np.cos(x[1]) +
+                                    self.c_s(x)*np.sin(x[0])*np.sin(x[1]) +
+                                    self.c_l(x)*np.cos(x[0]))]
+            self.c_ell = lambda x: [(self.Cell0_dB(x[4]) +
+                                     self.Cellalpha_dB(x[4])*x[0] +
+                                     self.Cellbeta_dB(x[4])*x[1] +
+                                     self.Cellpbar_dB(x[4])*x[5] +
+                                     self.Cellqbar_dB(x[4])*x[6] +
+                                     self.Cellrbar_dB(x[4])*x[7] +
+                                     self.Cellda_dB(x[4])*x[2] +
+                                     self.Cellde_dB(x[4])*x[3])]
+            self.c_m = lambda x: [(self.Cm0_dB(x[4]) +
+                                   self.Cmalpha_dB(x[4])*x[0] +
+                                   self.Cmbeta_dB(x[4])*x[1] +
+                                   self.Cmpbar_dB(x[4])*x[5] +
+                                   self.Cmqbar_dB(x[4])*x[6] +
+                                   self.Cmrbar_dB(x[4])*x[7] +
+                                   self.Cmda_dB(x[4])*x[2] +
+                                   self.Cmde_dB(x[4])*x[3])]
+            self.c_n = lambda x: [(self.Cn0_dB(x[4]) +
+                                   self.Cnalpha_dB(x[4])*x[0] +
+                                   self.Cnbeta_dB(x[4])*x[1] +
+                                   self.Cnpbar_dB(x[4])*x[5] +
+                                   self.Cnqbar_dB(x[4])*x[6] +
+                                   self.Cnrbar_dB(x[4])*x[7] +
+                                   self.Cnda_dB(x[4])*x[2] +
+                                   self.Cnde_dB(x[4])*x[3])]
+        else:
+            self.c_l = lambda x: (self.CL0 +
+                                  self.CL_alpha*x[0] +
+                                  self.CL_qbar*x[6] +
+                                  self.CL_de*x[3])
+            self.c_s = lambda x: (self.CS_beta*x[1] +
+                                  self.CS_pbar*x[5] +
+                                  self.CS_rbar*x[7] +
+                                  self.CS_da*x[2] +
+                                  self.CS_dr*x[4])
+            self.c_d = lambda x: (self.CD0 + self.CD1*self.c_l(x) +
+                                  self.CD2*self.c_l(x)**2 +
+                                  self.CD3*self.c_s(x)**2 +
+                                  self.CD_qbar*x[6] +
+                                  self.CD_de*x[3])
+            self.c_x = lambda x: [-(self.c_d(x)*np.cos(x[0])*np.cos(x[1]) +
+                                    self.c_s(x)*np.cos(x[0])*np.sin(x[1]) -
+                                    self.c_l(x)*np.sin(x[0]))]
+            self.c_y = lambda x: [(self.c_s(x)*np.cos(x[1]) -
+                                   self.c_d(x)*np.sin(x[1]))]
+            self.c_z = lambda x: [-(self.c_d(x)*np.sin(x[0])*np.cos(x[1]) +
+                                    self.c_s(x)*np.sin(x[0])*np.sin(x[1]) +
+                                    self.c_l(x)*np.cos(x[0]))]
+            self.c_ell = lambda x: [(self.Cell_beta*x[1] +
+                                     self.Cell_pbar*x[5] +
+                                     self.Cell_rbar*x[7] +
+                                     self.Cell_da*x[2] +
+                                     self.Cell_dr*x[4])]
+            self.c_m = lambda x: [(self.Cm0 +
+                                   self.Cm_alpha*x[0] +
+                                   self.Cm_qbar*x[6] +
+                                   self.Cm_de*x[3])]
+            self.c_n = lambda x: [(self.Cn_beta*x[1] +
+                                   self.Cn_pbar*x[5] +
+                                   self.Cn_rbar*x[7] +
+                                   self.Cn_da*x[2] +
+                                   self.Cn_dr*x[4])]
 
     def _data_conversion(self, aero_data):
         """Converts aerodynamic data to be used in linear least-squares.
@@ -1004,14 +1635,14 @@ class TrimCase:
             squares fit.
 
         """
-        b2w_params = np.copy(np.array([aero_data[:, -6],
-                                       aero_data[:, -5],
-                                       aero_data[:, -4],
+        b2w_params = np.copy(np.array([aero_data[:, 8],
+                                       aero_data[:, 9],
+                                       aero_data[:, 10],
                                        np.deg2rad(aero_data[:, 0]),
                                        np.deg2rad(aero_data[:, 1])])).T
-        aero_data[:, -6] = [bf2w_drag(*args,) for args in b2w_params]
-        aero_data[:, -5] = [bf2w_side(*args,) for args in b2w_params]
-        aero_data[:, -4] = [bf2w_lift(*args,) for args in b2w_params]
+        aero_data[:, 8] = [bf2w_drag(*args,) for args in b2w_params]
+        aero_data[:, 9] = [bf2w_side(*args,) for args in b2w_params]
+        aero_data[:, 10] = [bf2w_lift(*args,) for args in b2w_params]
         aero_data[:, 5] *= self.lat_ref_len/(2.*self.V)
         aero_data[:, 6] *= self.lon_ref_len/(2.*self.V)
         aero_data[:, 7] *= self.lat_ref_len/(2.*self.V)
@@ -1072,6 +1703,9 @@ class TrimCase:
                 self.trim_error = [new - old for new, old in zip(trim_state_new, self.trim_state)]
                 self.trim_state = trim_state_new
                 self.trim_iter += 1
+            # trim_solution = optimize.fsolve(self._trim_sct_fsolve, np.zeros(6))
+            # print(trim_solution[:-1]*180/np.pi, trim_solution[-1])
+            # print(self._6dof_fm(trim_solution, self._vel_comp(trim_solution[0], trim_solution[1])))
 
 
     def _trim_shss(self, trim_params, climb_angle, **kwargs):
@@ -1145,51 +1779,130 @@ class TrimCase:
         CL = self.c_l([alpha, beta, d_a, d_e, d_r, pbar, qbar, rbar])
         CS = self.c_s([alpha, beta, d_a, d_e, d_r, pbar, qbar, rbar])
         CD = self.c_d([alpha, beta, d_a, d_e, d_r, pbar, qbar, rbar])
-        tau = (self.W*s_elev - self.W*(r*v - q*w)/self.g -
-               self.nondim_coeff*(CL*np.sin(alpha) -
-                                  CS*np.cos(alpha)*np.sin(beta) -
-                                  CD*np.cos(alpha)*np.cos(beta)))
-        beta = (CD*np.sin(beta)/np.cos(beta) -
-                self.CS_pbar*pbar -
-                self.CS_rbar*rbar -
-                self.CS_da*d_a -
-                self.CS_dr*d_r)/self.CS_beta
-        alpha = ((self.CW*c_bank*c_elev +
-                  self.CW*(q*u - p*v)/self.g -
-                  CS*np.sin(alpha)*np.sin(beta) -
-                  CD*np.sin(alpha)*np.cos(beta))/np.cos(alpha) -
-                 self.CL0 -
-                 self.CL_qbar*qbar -
-                 self.CL_de*d_e)/self.CL_alpha
-        d_a = ((self.hz*q -
-                self.hy*r -
-                (self.Iyy - self.Izz)*q*r -
-                self.Iyz*(q**2 - r**2) -
-                self.Ixz*p*q +
-                self.Ixy*p*r)/(self.nondim_coeff*self.lat_ref_len) -
-               self.Cell_beta*beta -
-               self.Cell_pbar*pbar -
-               self.Cell_rbar*rbar -
-               self.Cell_dr*d_r)/self.Cell_da
-        d_e = ((self.hx*r -
-                self.hz*p -
-                (self.Izz - self.Ixx)*p*r -
-                self.Ixz*(r**2 - p**2) -
-                self.Ixy*q*r +
-                self.Iyz*p*q)/(self.nondim_coeff*self.lon_ref_len) -
-               self.Cm0 -
-               self.Cm_alpha*alpha -
-               self.Cm_qbar*qbar)/self.Cm_de
-        d_r = ((self.hy*p -
-                self.hx*q -
-                (self.Ixx - self.Iyy)*p*q -
-                self.Ixy*(p**2 - q**2) -
-                self.Iyz*p*r +
-                self.Ixz*q*r)/(self.nondim_coeff*self.lat_ref_len) -
-               self.Cn_beta*beta -
-               self.Cn_pbar*pbar -
-               self.Cn_rbar*rbar -
-               self.Cn_da*d_a)/self.Cn_dr
+        if self.model == "bire":
+            Cm0 = self.Cm0_dB(d_r)
+            Cma = self.Cmalpha_dB(d_r)
+            Cmb = self.Cmbeta_dB(d_r)
+            Cmp = self.Cmpbar_dB(d_r)
+            Cmq = self.Cmqbar_dB(d_r)
+            Cmr = self.Cmrbar_dB(d_r)
+            Cmda = self.Cmda_dB(d_r)
+            Cmde = self.Cmde_dB(d_r)
+            Cn0 = self.Cn0_dB(d_r)
+            Cna = self.Cnalpha_dB(d_r)
+            Cnb = self.Cnbeta_dB(d_r)
+            Cnp = self.Cnpbar_dB(d_r)
+            Cnq = self.Cnqbar_dB(d_r)
+            Cnr = self.Cnrbar_dB(d_r)
+            Cnda = self.Cnda_dB(d_r)
+            Cnde = self.Cnde_dB(d_r)
+            CS0 = self.CS0_dB(d_r)
+            CSa = self.CSalpha_dB(d_r)
+            CSb = self.CSbeta_dB(d_r)
+            CSp = self.CSpbar_dB(d_r)
+            CSq = self.CSqbar_dB(d_r)
+            CSr = self.CSrbar_dB(d_r)
+            CSda = self.CSda_dB(d_r)
+            CSde = self.CSde_dB(d_r)
+            CL0 = self.CL0_dB(d_r)
+            CLa = self.CLalpha_dB(d_r)
+            CLb = self.CLbeta_dB(d_r)
+            CLp = self.CLpbar_dB(d_r)
+            CLq = self.CLqbar_dB(d_r)
+            CLr = self.CLrbar_dB(d_r)
+            CLda = self.CLda_dB(d_r)
+            CLde = self.CLde_dB(d_r)
+            Cell0 = self.Cell0_dB(d_r)
+            Cella = self.Cellalpha_dB(d_r)
+            Cellb = self.Cellbeta_dB(d_r)
+            Cellp = self.Cellpbar_dB(d_r)
+            Cellq = self.Cellqbar_dB(d_r)
+            Cellr = self.Cellrbar_dB(d_r)
+            Cellda = self.Cellda_dB(d_r)
+            Cellde = self.Cellde_dB(d_r)
+            d_e = ((self.hx*r -
+                    self.hz*p -
+                    (self.Izz - self.Ixx)*p*r -
+                    self.Ixz*(r**2 - p**2) -
+                    self.Ixy*q*r +
+                    self.Iyz*p*q)/(self.nondim_coeff*self.lon_ref_len) -
+                   Cm0 - Cma*alpha - Cmb*beta - Cmp*pbar - Cmq*qbar -
+                   Cmr*rbar - Cmda*d_a)/Cmde
+            d_r = ((self.hy*p -
+                    self.hx*q -
+                    (self.Ixx - self.Iyy)*p*q -
+                    self.Ixy*(p**2 - q**2) -
+                    self.Iyz*p*r +
+                    self.Ixz*q*r)/(self.nondim_coeff*self.lat_ref_len) -
+                   Cn0 - Cna*alpha - Cnb*beta - Cnp*pbar - Cnq*qbar -
+                   Cnr*rbar - Cnda*d_a - Cnde*d_e + d_r)
+            tau = (self.W*s_elev - self.W*(r*v - q*w)/self.g -
+                   self.nondim_coeff*(CL*np.sin(alpha) -
+                                      CS*np.cos(alpha)*np.sin(beta) -
+                                      CD*np.cos(alpha)*np.cos(beta)))
+            beta = (CD*np.sin(beta)/np.cos(beta) -
+                    CS0 - CSa*alpha - CSp*pbar - CSq*qbar - CSr*rbar -
+                    CSda*d_a - CSde*d_e)/CSb
+            alpha = ((self.CW*c_bank*c_elev +
+                      self.CW*(q*u - p*v)/self.g -
+                      CS*np.sin(alpha)*np.sin(beta) -
+                      CD*np.sin(alpha)*np.cos(beta))/np.cos(alpha) -
+                     CL0 - CLb*beta - CLp*pbar - CLq*qbar - CLr*rbar -
+                     CLda*d_a - CLde*d_e)/CLa
+            d_a = ((self.hz*q -
+                    self.hy*r -
+                    (self.Iyy - self.Izz)*q*r -
+                    self.Iyz*(q**2 - r**2) -
+                    self.Ixz*p*q +
+                    self.Ixy*p*r)/(self.nondim_coeff*self.lat_ref_len) -
+                   Cell0 - Cella*alpha - Cellb*beta - Cellp*pbar - Cellq*qbar -
+                   Cellr*rbar - Cellde*d_e)/Cellda
+        else:
+            tau = (self.W*s_elev - self.W*(r*v - q*w)/self.g -
+                   self.nondim_coeff*(CL*np.sin(alpha) -
+                                      CS*np.cos(alpha)*np.sin(beta) -
+                                      CD*np.cos(alpha)*np.cos(beta)))
+            beta = (CD*np.sin(beta)/np.cos(beta) -
+                    self.CS_pbar*pbar -
+                    self.CS_rbar*rbar -
+                    self.CS_da*d_a -
+                    self.CS_dr*d_r)/self.CS_beta
+            alpha = ((self.CW*c_bank*c_elev +
+                      self.CW*(q*u - p*v)/self.g -
+                      CS*np.sin(alpha)*np.sin(beta) -
+                      CD*np.sin(alpha)*np.cos(beta))/np.cos(alpha) -
+                     self.CL0 -
+                     self.CL_qbar*qbar -
+                     self.CL_de*d_e)/self.CL_alpha
+            d_a = ((self.hz*q -
+                    self.hy*r -
+                    (self.Iyy - self.Izz)*q*r -
+                    self.Iyz*(q**2 - r**2) -
+                    self.Ixz*p*q +
+                    self.Ixy*p*r)/(self.nondim_coeff*self.lat_ref_len) -
+                   self.Cell_beta*beta -
+                   self.Cell_pbar*pbar -
+                   self.Cell_rbar*rbar -
+                   self.Cell_dr*d_r)/self.Cell_da
+            d_e = ((self.hx*r -
+                    self.hz*p -
+                    (self.Izz - self.Ixx)*p*r -
+                    self.Ixz*(r**2 - p**2) -
+                    self.Ixy*q*r +
+                    self.Iyz*p*q)/(self.nondim_coeff*self.lon_ref_len) -
+                   self.Cm0 -
+                   self.Cm_alpha*alpha -
+                   self.Cm_qbar*qbar)/self.Cm_de
+            d_r = ((self.hy*p -
+                    self.hx*q -
+                    (self.Ixx - self.Iyy)*p*q -
+                    self.Ixy*(p**2 - q**2) -
+                    self.Iyz*p*r +
+                    self.Ixz*q*r)/(self.nondim_coeff*self.lat_ref_len) -
+                   self.Cn_beta*beta -
+                   self.Cn_pbar*pbar -
+                   self.Cn_rbar*rbar -
+                   self.Cn_da*d_a)/self.Cn_dr
         # Use aero model to find aero angles, throttle setting, and deflections
         CL = self.c_l([alpha, beta, d_a, d_e, d_r, pbar, qbar, rbar])
         load_factor = CL/self.CW
@@ -1201,31 +1914,48 @@ class TrimCase:
                         '\u03B1 [deg]', '\u03B2 [deg]', '\u03B4_a [deg]',
                         '\u03B4_e [deg]', '\u03B4_r [deg]', '\u03C4 [lbs]',
                         'n_a']
+        if self.model == "bire":
+            output_names[12] = '\u03B4_B [deg]'
         print("Iteration:" + str(self.trim_iter) + "\n")
         for name, value in zip(output_names, output):
             print(f'{name:10} ==> {value:3.8}')
         return [alpha, beta, d_a, d_e, d_r, p, q, r, tau]
         # return np.linalg.norm(total_forces + total_moments)
 
-
-
-    def _6dof_fm(self, params, f_xt, orientation, vel_bf, **kwargs):
-        shss_flag = kwargs.get("shss", False)
-        elevation_angle, bank_angle = orientation
+    def _trim_sct_fsolve(self, params):
+        alpha, beta, d_a, d_e, d_B, tau = params
+        # Calculate body-fixed velocities
+        vel_bf = self._vel_comp(alpha, beta)
         u, v, w = vel_bf
-        s_elev = np.sin(elevation_angle)
-        c_elev = np.cos(elevation_angle)
-        s_bank = np.sin(bank_angle)
-        c_bank = np.cos(bank_angle)
+        # Calculate elevation angle
+        self.elevation_angle = self._calc_elevation_angle(vel_bf,
+                                                          [self.climb_angle,
+                                                           self.bank_angle])
+        fm = self._6dof_fm(params, vel_bf)
+        return fm
+
+
+
+
+    def _6dof_fm(self, params, vel_bf, **kwargs):
+        f_xt = params[-1]
+        shss_flag = kwargs.get("shss", False)
+        u, v, w = vel_bf
+        s_elev = np.sin(self.elevation_angle)
+        c_elev = np.cos(self.elevation_angle)
+        s_bank = np.sin(self.bank_angle)
+        c_bank = np.cos(self.bank_angle)
         euler_transform = [-s_elev, s_bank*c_elev, c_bank*c_elev]
         if shss_flag:
             rot_rates = [0., 0., 0.]
         else:
             rot_rates = self._sct_rot_rates([s_elev, c_elev, s_bank, c_bank],
                                             euler_transform, u, w)
-        params = list(list(params[:]) + rot_rates)
+        pbar = rot_rates[0]*self.lat_ref_len/(2.*self.V)
+        qbar = rot_rates[1]*self.lon_ref_len/(2.*self.V)
+        rbar = rot_rates[2]*self.lat_ref_len/(2.*self.V)
+        params = list(list(params[:]) + [pbar, qbar, rbar])
         aero_forces, aero_moments = self._dimensionalize_aero_fm(params, f_xt)
-        print(aero_forces[1])
         weight_forces = self._6dof_weight_forces(euler_transform)
         rot_forces = self._6dof_coriolis_forces(rot_rates, vel_bf)
         total_forces = [x + y + z for x, y, z in zip(aero_forces,
@@ -1237,7 +1967,7 @@ class TrimCase:
                                                       rotor_moments,
                                                       corr_moments)]
         self.rot_rates = rot_rates
-        return total_forces, total_moments
+        return list(total_forces) + list(total_moments)
 
     def _6dof_weight_forces(self, euler_transform):
         weight_forces = [x*self.W for x in euler_transform]
@@ -1373,6 +2103,12 @@ class TrimCase:
         return (-s_elev*u/self.V + s_bank*c_elev*v/self.V +
                 c_bank*c_elev*w/self.V)
 
+#Baseline
+# trim_case = TrimCase(222., 0.0023084)
+# trim_case.import_aero_data("./misc/T1_final_rad.csv", model='linear')
+# trim_case.trim(climb_angle=0., bank_angle=0.0)
+
+#BIRE
 trim_case = TrimCase(222., 0.0023084)
-# trim_case.import_aero_data("./misc/TODatabase_body_3all.csv", model='linear')
-trim_case.trim(climb_angle=15., bank_angle=60.0)
+trim_case.import_aero_data("./misc/TODatabase_BIRE_body344.csv", model='bire', d_B = np.linspace(-90, 90, 44))
+trim_case.trim(climb_angle=0., bank_angle=0.0)
